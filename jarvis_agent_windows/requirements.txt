@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+pyautogui
+pygetwindow
+psutil
+numpy
+sounddevice
+faster-whisper
+silero-vad
+rapidfuzz

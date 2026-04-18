@@ -1,0 +1,47 @@
+# Monorepo migration backups
+.repo_migration_backup/
+
+# Workspace temp files
+tmp_test.txt
+memory.db
+
+# General
+.DS_Store
+*.log
+*.swp
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Backend
+jarvis_backend/.env
+jarvis_backend/.vscode/
+jarvis_backend/memory.db
+jarvis_backend/*.wav
+jarvis_backend/*.zip
+jarvis_backend/__pycache__/
+
+# Windows agent
+jarvis_agent_windows/.venv/
+jarvis_agent_windows/venv/
+jarvis_agent_windows/__pycache__/
+jarvis_agent_windows/*.zip
+jarvis_agent_windows/screenshot.png
+
+# Flutter / Dart
+jarvis_flutter/.idea/
+jarvis_flutter/.dart_tool/
+jarvis_flutter/.flutter-plugins-dependencies
+jarvis_flutter/.pub-cache/
+jarvis_flutter/.pub/
+jarvis_flutter/build/
+jarvis_flutter/android/build/
+jarvis_flutter/coverage/
+jarvis_flutter/venv/
+jarvis_flutter/*.iml
+jarvis_flutter/*.zip
+jarvis_flutter/migrate_working_dir/
