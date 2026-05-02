@@ -1,5 +1,34 @@
 TOOLS = [
     {
+        "name": "get_home_assistant_status",
+        "description": "Verifica se a ligacao ao Home Assistant esta configurada e ativa.",
+        "parameters": {}
+    },
+    {
+        "name": "list_home_assistant_entities",
+        "description": "Lista entidades do Home Assistant para poderes descobrir luzes, interruptores, sensores e outros dispositivos.",
+        "parameters": {
+            "domain": "string"
+        }
+    },
+    {
+        "name": "list_home_assistant_devices",
+        "description": "Lista os dispositivos Home Assistant sincronizados com aliases e nomes configurados para o assistente os reconhecer.",
+        "parameters": {
+            "domain": "string"
+        }
+    },
+    {
+        "name": "call_home_assistant_service",
+        "description": "Executa um servico do Home Assistant para controlar dispositivos ou automacoes.",
+        "parameters": {
+            "domain": "string",
+            "service": "string",
+            "entity_id": "string",
+            "service_data": "object"
+        }
+    },
+    {
         "name": "get_weather",
         "description": "Obtem a previsao do tempo para uma cidade.",
         "parameters": {
@@ -59,6 +88,48 @@ TOOLS = [
         "description": "Prime combinacoes de teclas conhecidas, como ctrl+s.",
         "parameters": {
             "keys": "string"
+        }
+    },
+    {
+        "name": "list_routines",
+        "description": "Lista as rotinas guardadas pelo assistente.",
+        "parameters": {}
+    },
+    {
+        "name": "create_routine",
+        "description": "Cria uma rotina persistente com nome, descricao, trigger opcional e acoes.",
+        "parameters": {
+            "name": "string",
+            "description": "string",
+            "trigger_text": "string",
+            "enabled": "boolean",
+            "actions": "array"
+        }
+    },
+    {
+        "name": "update_routine",
+        "description": "Atualiza uma rotina existente pelo identificador.",
+        "parameters": {
+            "routine_id": "string",
+            "name": "string",
+            "description": "string",
+            "trigger_text": "string",
+            "enabled": "boolean",
+            "actions": "array"
+        }
+    },
+    {
+        "name": "delete_routine",
+        "description": "Remove uma rotina existente pelo identificador.",
+        "parameters": {
+            "routine_id": "string"
+        }
+    },
+    {
+        "name": "run_routine",
+        "description": "Executa manualmente uma rotina existente pelo identificador.",
+        "parameters": {
+            "routine_id": "string"
         }
     }
 ]

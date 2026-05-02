@@ -5,6 +5,7 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 import api.server as server
+from home_assistant.service import call_service
 
 
 class ApiServerTests(unittest.TestCase):
@@ -85,6 +86,80 @@ class ApiServerTests(unittest.TestCase):
         response = self.client.get("/memory")
 
         self.assertEqual(response.status_code, 401)
+
+    @patch("api.server.connection_status", return_value={
+        "configured": True,
+        "connected": True,
+        "url": "http://192.168.1.163:8123",
+        "location_name": "Casa",
+        "entity_count": 12,
+        "message": "Ligacao ao Home Assistant ativa.",
+    })
+    def test_home_assistant_status_with_auth(self, mock_status):
+        response = self.client.get(
+            "/home-assistant/status",
+            headers=self.auth_headers(),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["connected"])
+        mock_status.assert_called_once()
+
+    @patch(
+        "api.server.list_devices",
+        return_value=[
+            {
+                "entity_id": "light.sala",
+                "domain": "light",
+                "friendly_name": "Luz Sala",
+                "alias": "luz da sala",
+                "state": "on",
+                "attributes": {},
+                "last_seen_at": "2026-04-18T12:00:00+00:00",
+                "updated_at": "2026-04-18T12:00:00+00:00",
+            }
+        ],
+    )
+    def test_home_assistant_devices_with_auth(self, mock_devices):
+        response = self.client.get(
+            "/home-assistant/devices",
+            headers=self.auth_headers(),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()[0]["alias"], "luz da sala")
+        mock_devices.assert_called_once()
+
+    @patch("api.server.delete_device", return_value=True)
+    def test_delete_home_assistant_device_with_auth(self, mock_delete):
+        response = self.client.delete(
+            "/home-assistant/devices/media_player.tv",
+            headers=self.auth_headers(),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["deleted"])
+        mock_delete.assert_called_once_with("media_player.tv")
+
+    @patch(
+        "home_assistant.service.resolve_device_reference",
+        return_value={
+            "entity_id": "media_player.vodafone_tv_4_2",
+            "alias": "Televisao",
+        },
+    )
+    @patch("home_assistant.service._request", return_value=[])
+    def test_call_service_resolves_alias_to_entity_id(self, mock_request, mock_resolve):
+        result = call_service(
+            "media_player",
+            "turn_off",
+            entity_id="Televisao",
+        )
+
+        self.assertEqual(result["entity_id"], "media_player.vodafone_tv_4_2")
+        self.assertEqual(result["resolved_from"], "Televisao")
+        mock_resolve.assert_called_once_with("Televisao", domain="media_player")
+        mock_request.assert_called_once()
 
     @patch("api.server.synthesize_speech", return_value="ZmFrZS1hdWRpbw==")
     def test_tts_works_with_auth(self, mock_tts):

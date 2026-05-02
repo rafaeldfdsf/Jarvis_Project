@@ -1,7 +1,9 @@
-﻿import 'dart:async';
+import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
+import '../models/routine.dart';
 import '../services/app_settings_service.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -19,6 +21,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
       TextEditingController();
   final TextEditingController _userNameController = TextEditingController();
   final TextEditingController _wakeWordController = TextEditingController();
+  final TextEditingController _homeAssistantUrlController =
+      TextEditingController();
+  final TextEditingController _homeAssistantTokenController =
+      TextEditingController();
+
+  bool _testingHomeAssistant = false;
+  HomeAssistantStatus? _homeAssistantStatus;
 
   @override
   void initState() {
@@ -39,6 +48,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _assistantNameController.text = _settings.assistantName;
     _userNameController.text = _settings.userName;
     _wakeWordController.text = _settings.wakeWordPhrase;
+    _homeAssistantUrlController.text = _settings.homeAssistantUrl;
+    _homeAssistantTokenController.text = _settings.homeAssistantToken;
   }
 
   Future<void> _saveSettings() async {
@@ -46,6 +57,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
       assistantName: _assistantNameController.text,
       userName: _userNameController.text,
       wakeWordPhrase: _wakeWordController.text,
+      homeAssistantUrl: _homeAssistantUrlController.text,
+      homeAssistantToken: _homeAssistantTokenController.text,
     );
 
     if (!mounted) {
@@ -71,6 +84,49 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
+  Future<void> _testHomeAssistant() async {
+    final saved = await _settings.saveSettings(
+      assistantName: _assistantNameController.text,
+      userName: _userNameController.text,
+      wakeWordPhrase: _wakeWordController.text,
+      homeAssistantUrl: _homeAssistantUrlController.text,
+      homeAssistantToken: _homeAssistantTokenController.text,
+    );
+    if (!saved || !mounted) {
+      return;
+    }
+
+    setState(() {
+      _testingHomeAssistant = true;
+    });
+
+    try {
+      final status = await _settings.testHomeAssistantConnection();
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _homeAssistantStatus = status;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(status.message)),
+      );
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(error.toString().replaceFirst('Exception: ', ''))),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _testingHomeAssistant = false;
+        });
+      }
+    }
+  }
+
   Future<void> _clearMemory() async {
     final success = await _settings.clearAssistantMemory();
 
@@ -93,7 +149,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
 
     if (success) {
-      setState(_applyServiceValues);
+      setState(() {
+        _homeAssistantStatus = null;
+        _applyServiceValues();
+      });
     }
   }
 
@@ -102,6 +161,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _assistantNameController.dispose();
     _userNameController.dispose();
     _wakeWordController.dispose();
+    _homeAssistantUrlController.dispose();
+    _homeAssistantTokenController.dispose();
     super.dispose();
   }
 
@@ -200,6 +261,82 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ),
                   const SizedBox(height: 16),
                   _SectionCard(
+                    title: 'Home Assistant',
+                    subtitle:
+                        'Configura a ligacao para o assistente descobrir entidades e controlar a tua casa.',
+                    child: Column(
+                      children: [
+                        _SettingsField(
+                          controller: _homeAssistantUrlController,
+                          icon: Icons.home_outlined,
+                          label: 'URL do Home Assistant',
+                          hintText: 'http://192.168.1.163:8123',
+                          helperText:
+                              'Usa o URL completo do teu servidor, por exemplo http://192.168.1.163:8123.',
+                          keyboardType: TextInputType.url,
+                        ),
+                        const SizedBox(height: 14),
+                        _SettingsField(
+                          controller: _homeAssistantTokenController,
+                          icon: Icons.key_outlined,
+                          label: 'Token do Home Assistant',
+                          hintText: 'Long-lived access token',
+                          helperText:
+                              'Cria um long-lived access token no perfil do Home Assistant. O assistente usa este token para autenticar pedidos.',
+                          obscureText: true,
+                        ),
+                        const SizedBox(height: 12),
+                        if (_homeAssistantStatus != null)
+                          _HomeAssistantStatusCard(status: _homeAssistantStatus!),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: FilledButton.tonalIcon(
+                                onPressed: _settings.saving || _testingHomeAssistant
+                                    ? null
+                                    : _testHomeAssistant,
+                                icon: _testingHomeAssistant
+                                    ? const SizedBox(
+                                        width: 16,
+                                        height: 16,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                        ),
+                                      )
+                                    : const Icon(Icons.link_rounded),
+                                label: Text(
+                                  _testingHomeAssistant
+                                      ? 'A testar...'
+                                      : 'Guardar e testar',
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            IconButton(
+                              tooltip: 'Colar URL',
+                              onPressed: () async {
+                                final data = await Clipboard.getData(
+                                  'text/plain',
+                                );
+                                final text = data?.text?.trim() ?? '';
+                                if (text.isNotEmpty && mounted) {
+                                  setState(() {
+                                    _homeAssistantUrlController.text = text;
+                                  });
+                                }
+                              },
+                              icon: const Icon(
+                                Icons.content_paste_rounded,
+                                color: Colors.white70,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  _SectionCard(
                     title: 'Memoria',
                     subtitle:
                         'Limpa dados persistentes guardados pelo assistente.',
@@ -207,7 +344,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       children: [
                         Expanded(
                           child: Text(
-                            'Apaga nome, preferencias, lembretes e outras entradas guardadas no backend.',
+                            'Apaga nome, preferencias, lembretes, credenciais e outras entradas guardadas no backend.',
                             style: TextStyle(
                               color: Colors.white.withOpacity(0.72),
                               height: 1.45,
@@ -320,7 +457,7 @@ class _SettingsHeroCard extends StatelessWidget {
                 ),
                 const SizedBox(height: 10),
                 Text(
-                  'Personaliza o nome do assistente, a palavra de ativacao e os dados principais usados pelo sistema.',
+                  'Personaliza o nome do assistente, a palavra de ativacao e a ligacao ao Home Assistant.',
                   style: TextStyle(
                     color: Colors.white.withOpacity(0.72),
                     height: 1.5,
@@ -454,6 +591,8 @@ class _SettingsField extends StatelessWidget {
     required this.label,
     required this.hintText,
     required this.helperText,
+    this.keyboardType,
+    this.obscureText = false,
   });
 
   final TextEditingController controller;
@@ -461,11 +600,15 @@ class _SettingsField extends StatelessWidget {
   final String label;
   final String hintText;
   final String helperText;
+  final TextInputType? keyboardType;
+  final bool obscureText;
 
   @override
   Widget build(BuildContext context) {
     return TextField(
       controller: controller,
+      keyboardType: keyboardType,
+      obscureText: obscureText,
       style: const TextStyle(color: Colors.white),
       decoration: InputDecoration(
         labelText: label,
@@ -489,3 +632,56 @@ class _SettingsField extends StatelessWidget {
   }
 }
 
+class _HomeAssistantStatusCard extends StatelessWidget {
+  const _HomeAssistantStatusCard({required this.status});
+
+  final HomeAssistantStatus status;
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = status.connected
+        ? const Color(0xFF4CE7A7)
+        : status.configured
+            ? const Color(0xFFFFCC80)
+            : const Color(0xFFFF8A80);
+
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: accent.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: accent.withOpacity(0.35)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            status.connected
+                ? 'Ligacao ativa'
+                : status.configured
+                    ? 'Ligacao com erro'
+                    : 'Ligacao em falta',
+            style: TextStyle(
+              color: accent,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            status.message,
+            style: const TextStyle(color: Colors.white, height: 1.4),
+          ),
+          if (status.locationName != null || status.entityCount > 0) ...[
+            const SizedBox(height: 8),
+            Text(
+              'Casa: ${status.locationName ?? '-'} | Entidades: ${status.entityCount}',
+              style: TextStyle(color: Colors.white.withOpacity(0.72)),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}

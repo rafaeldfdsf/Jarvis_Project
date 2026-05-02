@@ -11,11 +11,13 @@ import '../services/assistant_runtime_service.dart';
 import '../services/app_settings_service.dart';
 import '../services/app_shell_service.dart';
 import 'chat_screen.dart';
+import 'home_assistant_devices_screen.dart';
+import 'routines_screen.dart';
 import 'settings_screen.dart';
 import 'system_logs_screen.dart';
 import 'voice_assistant_screen.dart';
 
-enum AppSection { voice, chat, memory, history, logs, settings }
+enum AppSection { voice, chat, devices, routines, memory, history, logs, settings }
 
 class AppShell extends StatefulWidget {
   const AppShell({super.key});
@@ -344,6 +346,8 @@ class _AppShellState extends State<AppShell> with WindowListener, TrayListener {
                 overlayOnly: isVoiceOverlayMode,
               ),
               ChatScreen(embedded: true),
+              const HomeAssistantDevicesScreen(embedded: true),
+              const RoutinesScreen(embedded: true),
               AssistantMemoryScreen(embedded: true),
               ActivityHistoryScreen(embedded: true),
               SystemLogsScreen(embedded: true),
@@ -561,7 +565,7 @@ class _SidebarMenu extends StatelessWidget {
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      'O modo voz abre primeiro e o chat, a memoria, o historico, os logs e as configuracoes ficam sempre disponiveis no menu lateral.',
+                      'O modo voz abre primeiro e o chat, os dispositivos, as rotinas, a memoria, o historico, os logs e as configuracoes ficam sempre disponiveis no menu lateral.',
                       style: const TextStyle(
                         color: Colors.white,
                         height: 1.45,
@@ -666,7 +670,7 @@ class _BrandPanel extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           Text(
-            'Workspace principal do assistente com voz, chat, memoria, historico, logs e configuracoes.',
+            'Workspace principal do assistente com voz, chat, dispositivos, rotinas, memoria, historico, logs e configuracoes.',
             style: TextStyle(
               color: Colors.white.withOpacity(0.72),
               height: 1.5,
@@ -815,6 +819,10 @@ IconData _sectionIcon(AppSection section) {
       return Icons.graphic_eq_rounded;
     case AppSection.chat:
       return Icons.chat_bubble_outline_rounded;
+    case AppSection.devices:
+      return Icons.devices_other_rounded;
+    case AppSection.routines:
+      return Icons.auto_awesome_motion_rounded;
     case AppSection.memory:
       return Icons.storage_rounded;
     case AppSection.history:
@@ -832,6 +840,10 @@ String _sectionTitle(AppSection section) {
       return 'Modo Voz';
     case AppSection.chat:
       return 'Modo Chat';
+    case AppSection.devices:
+      return 'Dispositivos';
+    case AppSection.routines:
+      return 'Rotinas';
     case AppSection.memory:
       return 'Memoria';
     case AppSection.history:
@@ -849,6 +861,10 @@ String _sectionSubtitle(AppSection section, String assistantName) {
       return 'Interface principal do $assistantName com controlo por voz.';
     case AppSection.chat:
       return 'Conversas por texto com o mesmo backend e contexto.';
+    case AppSection.devices:
+      return 'Mapa de dispositivos e aliases do Home Assistant.';
+    case AppSection.routines:
+      return 'Gestao de rotinas persistentes e automacoes da casa.';
     case AppSection.memory:
       return 'Tabela da memoria persistente com filtros e pesquisa.';
     case AppSection.history:

@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../models/memory_entry.dart';
+import '../models/routine.dart';
 import 'api_service.dart';
 import 'memory_service.dart';
 
@@ -31,6 +32,8 @@ class AppSettingsService extends ChangeNotifier {
   String _assistantName = defaultAssistantName;
   String _userName = '';
   String _wakeWordPhrase = defaultAssistantName;
+  String _homeAssistantUrl = '';
+  String _homeAssistantToken = '';
   Set<String> _knownKeys = <String>{};
 
   bool get loading => _loading;
@@ -45,6 +48,8 @@ class AppSettingsService extends ChangeNotifier {
   }
 
   String get userName => _userName.trim();
+  String get homeAssistantUrl => _homeAssistantUrl.trim();
+  String get homeAssistantToken => _homeAssistantToken.trim();
 
   String get wakeWordPhrase {
     final clean = _wakeWordPhrase.trim();
@@ -104,6 +109,8 @@ class AppSettingsService extends ChangeNotifier {
     required String assistantName,
     required String userName,
     required String wakeWordPhrase,
+    required String homeAssistantUrl,
+    required String homeAssistantToken,
   }) async {
     final cleanAssistantName = assistantName.trim().isEmpty
         ? defaultAssistantName
@@ -112,6 +119,8 @@ class AppSettingsService extends ChangeNotifier {
     final cleanWakeWordPhrase = wakeWordPhrase.trim().isEmpty
         ? cleanAssistantName
         : wakeWordPhrase.trim();
+    final cleanHomeAssistantUrl = homeAssistantUrl.trim();
+    final cleanHomeAssistantToken = homeAssistantToken.trim();
 
     _saving = true;
     _error = null;
@@ -122,6 +131,8 @@ class AppSettingsService extends ChangeNotifier {
       _assistantName = cleanAssistantName;
       _userName = cleanUserName;
       _wakeWordPhrase = cleanWakeWordPhrase;
+      _homeAssistantUrl = cleanHomeAssistantUrl;
+      _homeAssistantToken = cleanHomeAssistantToken;
       _loadedOnce = true;
       await _persistLocalSettings();
 
@@ -129,6 +140,8 @@ class AppSettingsService extends ChangeNotifier {
         await _saveField('assistant_name', cleanAssistantName);
         await _saveField('name', cleanUserName);
         await _saveField('wake_word_phrase', cleanWakeWordPhrase);
+        await _saveField('home_assistant_url', cleanHomeAssistantUrl);
+        await _saveField('home_assistant_token', cleanHomeAssistantToken);
         await MemoryService().refresh();
       } catch (error) {
         _warning = _normalizeError(error);
@@ -156,6 +169,8 @@ class AppSettingsService extends ChangeNotifier {
       _assistantName = defaultAssistantName;
       _userName = '';
       _wakeWordPhrase = defaultAssistantName;
+      _homeAssistantUrl = '';
+      _homeAssistantToken = '';
       _knownKeys = <String>{};
       _loadedOnce = true;
       await _persistLocalSettings();
@@ -188,6 +203,8 @@ class AppSettingsService extends ChangeNotifier {
     final assistantName = _entryValue(entries, 'assistant_name');
     final userName = _entryValue(entries, 'name');
     final wakeWordPhrase = _entryValue(entries, 'wake_word_phrase');
+    final homeAssistantUrl = _entryValue(entries, 'home_assistant_url');
+    final homeAssistantToken = _entryValue(entries, 'home_assistant_token');
 
     _assistantName = assistantName?.trim().isNotEmpty == true
         ? assistantName!.trim()
@@ -204,6 +221,16 @@ class AppSettingsService extends ChangeNotifier {
         : preserveExistingValues
             ? wakeWordOrDefault()
             : _assistantName;
+    _homeAssistantUrl = homeAssistantUrl?.trim().isNotEmpty == true
+        ? homeAssistantUrl!.trim()
+        : preserveExistingValues
+            ? _homeAssistantUrl
+            : '';
+    _homeAssistantToken = homeAssistantToken?.trim().isNotEmpty == true
+        ? homeAssistantToken!.trim()
+        : preserveExistingValues
+            ? _homeAssistantToken
+            : '';
   }
 
   String assistantNameOrDefault() {
@@ -267,6 +294,8 @@ class AppSettingsService extends ChangeNotifier {
       _wakeWordPhrase = (data['wake_word_phrase']?.toString().trim().isNotEmpty == true)
           ? data['wake_word_phrase'].toString().trim()
           : _assistantName;
+      _homeAssistantUrl = data['home_assistant_url']?.toString().trim() ?? '';
+      _homeAssistantToken = data['home_assistant_token']?.toString().trim() ?? '';
 
       return true;
     } catch (_) {
@@ -282,9 +311,15 @@ class AppSettingsService extends ChangeNotifier {
         'assistant_name': assistantName,
         'user_name': userName,
         'wake_word_phrase': wakeWordPhrase,
+        'home_assistant_url': homeAssistantUrl,
+        'home_assistant_token': homeAssistantToken,
       }),
       flush: true,
     );
+  }
+
+  Future<HomeAssistantStatus> testHomeAssistantConnection() {
+    return _api.testHomeAssistantConnection();
   }
 
   Future<File> _settingsFile() async {

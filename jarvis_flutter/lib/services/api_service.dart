@@ -7,7 +7,9 @@ import 'package:http/http.dart' as http;
 
 import '../config/app_endpoints.dart';
 import '../models/chat_response.dart';
+import '../models/home_assistant_device.dart';
 import '../models/memory_entry.dart';
+import '../models/routine.dart';
 
 class ApiService {
   static const Duration _requestTimeout = Duration(seconds: 15);
@@ -218,6 +220,333 @@ class ApiService {
       if (res.statusCode != 200) {
         throw Exception('Erro ao limpar memoria (${res.statusCode}).');
       }
+    } on TimeoutException {
+      throw Exception(AppEndpoints.apiUnavailableMessage());
+    } on SocketException {
+      throw Exception(AppEndpoints.apiUnavailableMessage());
+    } on http.ClientException {
+      throw Exception(AppEndpoints.apiUnavailableMessage());
+    }
+  }
+
+  Future<HomeAssistantStatus> testHomeAssistantConnection() async {
+    try {
+      final res = await http
+          .get(
+            Uri.parse('$baseUrl/home-assistant/status'),
+            headers: AppEndpoints.apiHeaders(),
+          )
+          .timeout(_requestTimeout);
+
+      if (res.statusCode != 200) {
+        throw Exception(
+          _extractErrorMessage(res.body) ??
+              'Erro ao testar Home Assistant (${res.statusCode}).',
+        );
+      }
+
+      final data = jsonDecode(res.body) as Map<String, dynamic>;
+      return HomeAssistantStatus.fromJson(data);
+    } on TimeoutException {
+      throw Exception(AppEndpoints.apiUnavailableMessage());
+    } on SocketException {
+      throw Exception(AppEndpoints.apiUnavailableMessage());
+    } on http.ClientException {
+      throw Exception(AppEndpoints.apiUnavailableMessage());
+    }
+  }
+
+  Future<List<HomeAssistantDevice>> fetchHomeAssistantDevices() async {
+    try {
+      final res = await http
+          .get(
+            Uri.parse('$baseUrl/home-assistant/devices'),
+            headers: AppEndpoints.apiHeaders(),
+          )
+          .timeout(_requestTimeout);
+
+      if (res.statusCode != 200) {
+        throw Exception(
+          _extractErrorMessage(res.body) ??
+              'Erro ao carregar dispositivos Home Assistant (${res.statusCode}).',
+        );
+      }
+
+      final data = jsonDecode(res.body) as List<dynamic>;
+      return data
+          .whereType<Map<String, dynamic>>()
+          .map(HomeAssistantDevice.fromJson)
+          .toList();
+    } on TimeoutException {
+      throw Exception(AppEndpoints.apiUnavailableMessage());
+    } on SocketException {
+      throw Exception(AppEndpoints.apiUnavailableMessage());
+    } on http.ClientException {
+      throw Exception(AppEndpoints.apiUnavailableMessage());
+    }
+  }
+
+  Future<List<HomeAssistantDevice>> syncHomeAssistantDevices() async {
+    try {
+      final res = await http
+          .post(
+            Uri.parse('$baseUrl/home-assistant/devices/sync'),
+            headers: AppEndpoints.apiHeaders(),
+          )
+          .timeout(_requestTimeout);
+
+      if (res.statusCode != 200) {
+        throw Exception(
+          _extractErrorMessage(res.body) ??
+              'Erro ao sincronizar dispositivos Home Assistant (${res.statusCode}).',
+        );
+      }
+
+      final data = jsonDecode(res.body) as List<dynamic>;
+      return data
+          .whereType<Map<String, dynamic>>()
+          .map(HomeAssistantDevice.fromJson)
+          .toList();
+    } on TimeoutException {
+      throw Exception(AppEndpoints.apiUnavailableMessage());
+    } on SocketException {
+      throw Exception(AppEndpoints.apiUnavailableMessage());
+    } on http.ClientException {
+      throw Exception(AppEndpoints.apiUnavailableMessage());
+    }
+  }
+
+  Future<HomeAssistantDevice> updateHomeAssistantDeviceAlias(
+    String entityId,
+    String alias,
+  ) async {
+    try {
+      final res = await http
+          .put(
+            Uri.parse(
+              '$baseUrl/home-assistant/devices/${Uri.encodeComponent(entityId)}/alias',
+            ),
+            headers: AppEndpoints.apiHeaders(includeJsonContentType: true),
+            body: jsonEncode({'alias': alias}),
+          )
+          .timeout(_requestTimeout);
+
+      if (res.statusCode != 200) {
+        throw Exception(
+          _extractErrorMessage(res.body) ??
+              'Erro ao atualizar alias do dispositivo (${res.statusCode}).',
+        );
+      }
+
+      final data = jsonDecode(res.body) as Map<String, dynamic>;
+      return HomeAssistantDevice.fromJson(data);
+    } on TimeoutException {
+      throw Exception(AppEndpoints.apiUnavailableMessage());
+    } on SocketException {
+      throw Exception(AppEndpoints.apiUnavailableMessage());
+    } on http.ClientException {
+      throw Exception(AppEndpoints.apiUnavailableMessage());
+    }
+  }
+
+  Future<void> deleteHomeAssistantDevice(String entityId) async {
+    try {
+      final res = await http
+          .delete(
+            Uri.parse(
+              '$baseUrl/home-assistant/devices/${Uri.encodeComponent(entityId)}',
+            ),
+            headers: AppEndpoints.apiHeaders(),
+          )
+          .timeout(_requestTimeout);
+
+      if (res.statusCode != 200) {
+        throw Exception(
+          _extractErrorMessage(res.body) ??
+              'Erro ao remover dispositivo (${res.statusCode}).',
+        );
+      }
+    } on TimeoutException {
+      throw Exception(AppEndpoints.apiUnavailableMessage());
+    } on SocketException {
+      throw Exception(AppEndpoints.apiUnavailableMessage());
+    } on http.ClientException {
+      throw Exception(AppEndpoints.apiUnavailableMessage());
+    }
+  }
+
+  Future<int> clearHomeAssistantDevices() async {
+    try {
+      final res = await http
+          .delete(
+            Uri.parse('$baseUrl/home-assistant/devices'),
+            headers: AppEndpoints.apiHeaders(),
+          )
+          .timeout(_requestTimeout);
+
+      if (res.statusCode != 200) {
+        throw Exception(
+          _extractErrorMessage(res.body) ??
+              'Erro ao limpar dispositivos (${res.statusCode}).',
+        );
+      }
+
+      final data = jsonDecode(res.body) as Map<String, dynamic>;
+      return (data['count'] as num?)?.toInt() ?? 0;
+    } on TimeoutException {
+      throw Exception(AppEndpoints.apiUnavailableMessage());
+    } on SocketException {
+      throw Exception(AppEndpoints.apiUnavailableMessage());
+    } on http.ClientException {
+      throw Exception(AppEndpoints.apiUnavailableMessage());
+    }
+  }
+
+  Future<List<Routine>> fetchRoutines() async {
+    try {
+      final res = await http
+          .get(
+            Uri.parse('$baseUrl/routines'),
+            headers: AppEndpoints.apiHeaders(),
+          )
+          .timeout(_requestTimeout);
+
+      if (res.statusCode != 200) {
+        throw Exception('Erro ao carregar rotinas (${res.statusCode}).');
+      }
+
+      final data = jsonDecode(res.body) as List<dynamic>;
+      return data
+          .whereType<Map<String, dynamic>>()
+          .map(Routine.fromJson)
+          .toList();
+    } on TimeoutException {
+      throw Exception(AppEndpoints.apiUnavailableMessage());
+    } on SocketException {
+      throw Exception(AppEndpoints.apiUnavailableMessage());
+    } on http.ClientException {
+      throw Exception(AppEndpoints.apiUnavailableMessage());
+    }
+  }
+
+  Future<Routine> createRoutine({
+    required String name,
+    required String description,
+    required String triggerText,
+    required List<RoutineAction> actions,
+    required bool enabled,
+  }) async {
+    return _saveRoutine(
+      '$baseUrl/routines',
+      method: 'POST',
+      name: name,
+      description: description,
+      triggerText: triggerText,
+      actions: actions,
+      enabled: enabled,
+    );
+  }
+
+  Future<Routine> updateRoutine(
+    String routineId, {
+    required String name,
+    required String description,
+    required String triggerText,
+    required List<RoutineAction> actions,
+    required bool enabled,
+  }) async {
+    return _saveRoutine(
+      '$baseUrl/routines/${Uri.encodeComponent(routineId)}',
+      method: 'PUT',
+      name: name,
+      description: description,
+      triggerText: triggerText,
+      actions: actions,
+      enabled: enabled,
+    );
+  }
+
+  Future<Routine> _saveRoutine(
+    String url, {
+    required String method,
+    required String name,
+    required String description,
+    required String triggerText,
+    required List<RoutineAction> actions,
+    required bool enabled,
+  }) async {
+    final uri = Uri.parse(url);
+    final body = jsonEncode({
+      'name': name,
+      'description': description,
+      'trigger_text': triggerText,
+      'actions': actions.map((item) => item.toJson()).toList(),
+      'enabled': enabled,
+    });
+
+    try {
+      final request = http.Request(method, uri)
+        ..headers.addAll(AppEndpoints.apiHeaders(includeJsonContentType: true))
+        ..body = body;
+      final streamed = await request.send().timeout(_requestTimeout);
+      final response = await http.Response.fromStream(streamed);
+
+      if (response.statusCode != 200) {
+        throw Exception(
+          _extractErrorMessage(response.body) ??
+              'Erro ao guardar rotina (${response.statusCode}).',
+        );
+      }
+
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      return Routine.fromJson(data);
+    } on TimeoutException {
+      throw Exception(AppEndpoints.apiUnavailableMessage());
+    } on SocketException {
+      throw Exception(AppEndpoints.apiUnavailableMessage());
+    } on http.ClientException {
+      throw Exception(AppEndpoints.apiUnavailableMessage());
+    }
+  }
+
+  Future<void> deleteRoutine(String routineId) async {
+    try {
+      final res = await http
+          .delete(
+            Uri.parse('$baseUrl/routines/${Uri.encodeComponent(routineId)}'),
+            headers: AppEndpoints.apiHeaders(),
+          )
+          .timeout(_requestTimeout);
+
+      if (res.statusCode != 200) {
+        throw Exception('Erro ao remover rotina (${res.statusCode}).');
+      }
+    } on TimeoutException {
+      throw Exception(AppEndpoints.apiUnavailableMessage());
+    } on SocketException {
+      throw Exception(AppEndpoints.apiUnavailableMessage());
+    } on http.ClientException {
+      throw Exception(AppEndpoints.apiUnavailableMessage());
+    }
+  }
+
+  Future<Map<String, dynamic>> runRoutine(String routineId) async {
+    try {
+      final res = await http
+          .post(
+            Uri.parse('$baseUrl/routines/${Uri.encodeComponent(routineId)}/run'),
+            headers: AppEndpoints.apiHeaders(),
+          )
+          .timeout(_requestTimeout);
+
+      if (res.statusCode != 200) {
+        throw Exception(
+          _extractErrorMessage(res.body) ??
+              'Erro ao executar rotina (${res.statusCode}).',
+        );
+      }
+
+      return jsonDecode(res.body) as Map<String, dynamic>;
     } on TimeoutException {
       throw Exception(AppEndpoints.apiUnavailableMessage());
     } on SocketException {
