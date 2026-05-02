@@ -242,6 +242,7 @@ class _VoiceAssistantScreenState extends State<VoiceAssistantScreen> {
   Future<void> _captureAndProcessSpeech() async {
     final capture = await voiceService.captureSpeechTurn(
       maxInitialWait: const Duration(seconds: 4),
+      inputDeviceId: settings.microphoneDeviceId,
       onSpeechStart: () {
         if (!mounted || !isListening) {
           return;

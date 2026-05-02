@@ -2,6 +2,57 @@
 
 Estado observado no workspace em 2026-04-18.
 
+## Atualizacao 2026-05-02
+
+Desde a versao descrita abaixo, o projeto passou a ter estas alteracoes estruturais importantes:
+
+- autenticacao por utilizador no backend
+- login persistente no Flutter
+- registo com verificacao por email
+- recuperacao de palavra-passe por email
+- separacao de dados por conta para settings, memoria, rotinas, Home Assistant e dispositivos
+- logout rapido no menu lateral da app
+
+Impacto pratico:
+
+1. O Flutter deixou de depender apenas de `JARVIS_API_TOKEN` para uso normal.
+2. A app abre agora num ecrã de login e guarda a sessao em `jarvis_auth.json`.
+3. O backend envia emails transacionais por SMTP quando isso estiver configurado em `.env`.
+4. Contas nao verificadas nao conseguem entrar.
+5. Ao repor a palavra-passe, as sessoes antigas da conta ficam invalidadas.
+
+Novas variaveis relevantes no backend:
+
+- `JARVIS_APP_NAME`
+- `JARVIS_SMTP_HOST`
+- `JARVIS_SMTP_PORT`
+- `JARVIS_SMTP_USERNAME`
+- `JARVIS_SMTP_PASSWORD`
+- `JARVIS_SMTP_FROM_EMAIL`
+- `JARVIS_SMTP_FROM_NAME`
+- `JARVIS_SMTP_USE_TLS`
+
+Novos endpoints de autenticacao:
+
+- `POST /auth/register`
+- `POST /auth/verify-email`
+- `POST /auth/resend-verification`
+- `POST /auth/login`
+- `POST /auth/forgot-password`
+- `POST /auth/reset-password`
+- `GET /auth/me`
+- `POST /auth/logout`
+
+Novos ficheiros principais introduzidos:
+
+- `jarvis_backend/auth_store.py`
+- `jarvis_backend/email_service.py`
+- `jarvis_flutter/lib/services/auth_service.dart`
+- `jarvis_flutter/lib/screens/login_screen.dart`
+- `jarvis_flutter/lib/models/auth_models.dart`
+
+Para operacao atual, considera esta atualizacao como a fonte de verdade para autenticacao e conta, mesmo que algumas secoes antigas mais abaixo descrevam a versao anterior.
+
 Este manual foi escrito a partir da leitura direta do codigo existente. O objetivo e permitir que uma pessoa nova entre no projeto, perceba a arquitetura, saiba onde cada responsabilidade vive e consiga continuar a evolucao sem ter de reconstruir tudo do zero.
 
 ## 1. O que este projeto e

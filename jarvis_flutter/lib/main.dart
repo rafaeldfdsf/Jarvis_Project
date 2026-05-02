@@ -5,7 +5,9 @@ import 'package:flutter/material.dart';
 import 'package:window_manager/window_manager.dart';
 
 import 'screens/app_shell.dart';
+import 'screens/login_screen.dart';
 import 'services/app_settings_service.dart';
+import 'services/auth_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -38,10 +40,11 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final settings = AppSettingsService();
-    settings.load();
+    final auth = AuthService();
+    auth.load();
 
     return AnimatedBuilder(
-      animation: settings,
+      animation: Listenable.merge([settings, auth]),
       builder: (context, _) {
         return MaterialApp(
           debugShowCheckedModeBanner: false,
@@ -56,8 +59,35 @@ class MyApp extends StatelessWidget {
               surface: Color(0xFF07111B),
             ),
           ),
-          home: const AppShell(),
+          home: const _AuthGate(),
         );
+      },
+    );
+  }
+}
+
+class _AuthGate extends StatelessWidget {
+  const _AuthGate();
+
+  @override
+  Widget build(BuildContext context) {
+    final auth = AuthService();
+    return AnimatedBuilder(
+      animation: auth,
+      builder: (context, _) {
+        if (auth.loading && !auth.loadedOnce) {
+          return const Scaffold(
+            body: Center(
+              child: CircularProgressIndicator(),
+            ),
+          );
+        }
+
+        if (!auth.isAuthenticated) {
+          return const LoginScreen();
+        }
+
+        return const AppShell();
       },
     );
   }

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../models/home_assistant_device.dart';
+import '../services/app_settings_service.dart';
 import '../services/home_assistant_devices_service.dart';
 
 class HomeAssistantDevicesScreen extends StatefulWidget {
@@ -15,22 +16,54 @@ class HomeAssistantDevicesScreen extends StatefulWidget {
 
 class _HomeAssistantDevicesScreenState
     extends State<HomeAssistantDevicesScreen> {
+  final AppSettingsService _settings = AppSettingsService();
   final HomeAssistantDevicesService _devicesService =
       HomeAssistantDevicesService();
   final TextEditingController _searchController = TextEditingController();
+  bool _homeAssistantAvailable = false;
 
   @override
   void initState() {
     super.initState();
     _searchController.addListener(_refreshView);
-    _devicesService.load();
+    _settings.addListener(_handleSettingsChange);
+    _bootstrap();
   }
 
   @override
   void dispose() {
     _searchController.removeListener(_refreshView);
+    _settings.removeListener(_handleSettingsChange);
     _searchController.dispose();
     super.dispose();
+  }
+
+  Future<void> _bootstrap() async {
+    await _settings.load();
+    if (!mounted) {
+      return;
+    }
+    _syncAvailability(loadDevices: true);
+  }
+
+  void _handleSettingsChange() {
+    if (!mounted) {
+      return;
+    }
+    _syncAvailability(loadDevices: true);
+  }
+
+  void _syncAvailability({bool loadDevices = false}) {
+    _devicesService.refreshAvailability();
+    final available = _devicesService.homeAssistantAvailable;
+    if (_homeAssistantAvailable != available) {
+      setState(() {
+        _homeAssistantAvailable = available;
+      });
+    }
+    if (loadDevices && available) {
+      _devicesService.load(force: true);
+    }
   }
 
   void _refreshView() {
@@ -270,9 +303,10 @@ class _HomeAssistantDevicesScreenState
     final topPadding = widget.embedded && isCompact ? 78.0 : 18.0;
 
     return AnimatedBuilder(
-      animation: _devicesService,
+      animation: Listenable.merge([_settings, _devicesService]),
       builder: (context, _) {
         final devices = _filteredDevices(_devicesService.devices);
+        final unavailableMessage = _devicesService.unavailableMessage;
         return Container(
           decoration: const BoxDecoration(
             gradient: LinearGradient(
@@ -328,13 +362,17 @@ class _HomeAssistantDevicesScreenState
                         ),
                         const SizedBox(width: 16),
                         FilledButton.icon(
-                          onPressed: _devicesService.loading ? null : _syncDevices,
+                          onPressed: !_homeAssistantAvailable || _devicesService.loading
+                              ? null
+                              : _syncDevices,
                           icon: const Icon(Icons.sync_rounded),
                           label: const Text('Sincronizar'),
                         ),
                         const SizedBox(width: 10),
                         FilledButton.tonalIcon(
-                          onPressed: _devicesService.loading ? null : _clearAllDevices,
+                          onPressed: !_homeAssistantAvailable || _devicesService.loading
+                              ? null
+                              : _clearAllDevices,
                           icon: const Icon(Icons.delete_sweep_outlined),
                           label: const Text('Limpar lista'),
                         ),
@@ -361,6 +399,14 @@ class _HomeAssistantDevicesScreenState
                     ),
                   ),
                   const SizedBox(height: 12),
+                  if (unavailableMessage != null)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: Text(
+                        unavailableMessage,
+                        style: const TextStyle(color: Color(0xFFFFCC80)),
+                      ),
+                    ),
                   if (_devicesService.error != null)
                     Padding(
                       padding: const EdgeInsets.only(bottom: 12),
@@ -371,7 +417,15 @@ class _HomeAssistantDevicesScreenState
                     ),
                   Expanded(
                     child: devices.isEmpty && !_devicesService.loading
-                        ? const _EmptyDevicesState()
+                        ? _EmptyDevicesState(
+                            title: _homeAssistantAvailable
+                                ? 'Ainda nao existem dispositivos sincronizados.'
+                                : 'Home Assistant indisponivel.',
+                            message: _homeAssistantAvailable
+                                ? 'Sincroniza os dispositivos do Home Assistant para poderes gerir aliases e ensinar o assistente a reconhece-los.'
+                                : (unavailableMessage ??
+                                    'Ativa o Home Assistant nas configuracoes para poderes sincronizar dispositivos.'),
+                          )
                         : ListView.separated(
                             itemCount: devices.length,
                             separatorBuilder: (_, _) =>
@@ -530,7 +584,13 @@ class _DeviceBadge extends StatelessWidget {
 }
 
 class _EmptyDevicesState extends StatelessWidget {
-  const _EmptyDevicesState();
+  const _EmptyDevicesState({
+    required this.title,
+    required this.message,
+  });
+
+  final String title;
+  final String message;
 
   @override
   Widget build(BuildContext context) {
@@ -547,8 +607,8 @@ class _EmptyDevicesState extends StatelessWidget {
                 color: Colors.white.withOpacity(0.36),
               ),
               const SizedBox(height: 14),
-              const Text(
-                'Ainda nao existem dispositivos sincronizados.',
+              Text(
+                title,
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   color: Colors.white,
@@ -558,7 +618,7 @@ class _EmptyDevicesState extends StatelessWidget {
               ),
               const SizedBox(height: 8),
               Text(
-                'Sincroniza os dispositivos do Home Assistant para poderes gerir aliases e ensinar o assistente a reconhece-los.',
+                message,
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   color: Colors.white.withOpacity(0.66),

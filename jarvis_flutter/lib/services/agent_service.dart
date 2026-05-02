@@ -66,6 +66,7 @@ class AgentWakeWordStartResult {
   final bool running;
   final String? engine;
   final String? keyword;
+  final int? sensitivity;
   final String? error;
 
   const AgentWakeWordStartResult({
@@ -73,6 +74,7 @@ class AgentWakeWordStartResult {
     required this.running,
     this.engine,
     this.keyword,
+    this.sensitivity,
     this.error,
   });
 
@@ -82,6 +84,7 @@ class AgentWakeWordStartResult {
       running: json?['running'] == true,
       engine: json?['engine']?.toString(),
       keyword: json?['keyword']?.toString(),
+      sensitivity: (json?['sensitivity'] as num?)?.toInt(),
       error: json?['error']?.toString(),
     );
   }
@@ -93,6 +96,8 @@ class AgentHealthStatus {
   final String? wakeWordEngine;
   final String? wakeWordError;
   final String? wakeWordPhrase;
+  final int? wakeWordSensitivity;
+  final int? wakeWordThreshold;
 
   const AgentHealthStatus({
     required this.ok,
@@ -100,6 +105,8 @@ class AgentHealthStatus {
     this.wakeWordEngine,
     this.wakeWordError,
     this.wakeWordPhrase,
+    this.wakeWordSensitivity,
+    this.wakeWordThreshold,
   });
 
   factory AgentHealthStatus.fromJson(Map<String, dynamic>? json) {
@@ -109,6 +116,8 @@ class AgentHealthStatus {
       wakeWordEngine: json?['wake_word_engine']?.toString(),
       wakeWordError: json?['wake_word_error']?.toString(),
       wakeWordPhrase: json?['wake_word_phrase']?.toString(),
+      wakeWordSensitivity: (json?['wake_word_sensitivity'] as num?)?.toInt(),
+      wakeWordThreshold: (json?['wake_word_threshold'] as num?)?.toInt(),
     );
   }
 }
@@ -162,12 +171,18 @@ class AgentService {
     }
   }
 
-  Future<AgentWakeWordStartResult> startWakeWord({String? keyword}) async {
+  Future<AgentWakeWordStartResult> startWakeWord({
+    String? keyword,
+    int? sensitivity,
+  }) async {
     try {
       final payload = <String, dynamic>{};
       final cleanKeyword = keyword?.trim() ?? '';
       if (cleanKeyword.isNotEmpty) {
         payload['keyword'] = cleanKeyword;
+      }
+      if (sensitivity != null) {
+        payload['sensitivity'] = sensitivity;
       }
 
       final res = await http

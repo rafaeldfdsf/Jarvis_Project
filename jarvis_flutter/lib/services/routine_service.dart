@@ -143,6 +143,14 @@ class RoutineService extends ChangeNotifier {
     }
   }
 
+  void resetForAccountSwitch() {
+    _routines.clear();
+    _loading = false;
+    _loadedOnce = false;
+    _error = null;
+    notifyListeners();
+  }
+
   String _normalizeError(Object error) {
     final text = error.toString();
     if (text.startsWith('Exception: ')) {

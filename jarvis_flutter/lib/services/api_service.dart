@@ -6,15 +6,201 @@ import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 
 import '../config/app_endpoints.dart';
+import '../models/app_setting_entry.dart';
+import '../models/auth_models.dart';
 import '../models/chat_response.dart';
 import '../models/home_assistant_device.dart';
 import '../models/memory_entry.dart';
+import '../models/registered_device.dart';
 import '../models/routine.dart';
 
 class ApiService {
   static const Duration _requestTimeout = Duration(seconds: 15);
 
   final String baseUrl = AppEndpoints.apiBaseUrl;
+
+  Future<AuthStatusModel> register({
+    required String email,
+    required String password,
+    required String displayName,
+  }) async {
+    return _postAuthStatus(
+      '/auth/register',
+      body: <String, dynamic>{
+        'email': email,
+        'password': password,
+        'display_name': displayName,
+      },
+    );
+  }
+
+  Future<AuthSessionModel> login({
+    required String email,
+    required String password,
+  }) async {
+    return _authenticate(
+      '/auth/login',
+      body: <String, dynamic>{
+        'email': email,
+        'password': password,
+      },
+    );
+  }
+
+  Future<AuthSessionModel> verifyEmail({
+    required String email,
+    required String code,
+  }) async {
+    return _authenticate(
+      '/auth/verify-email',
+      body: <String, dynamic>{
+        'email': email,
+        'code': code,
+      },
+    );
+  }
+
+  Future<AuthStatusModel> resendVerification({
+    required String email,
+  }) async {
+    return _postAuthStatus(
+      '/auth/resend-verification',
+      body: <String, dynamic>{
+        'email': email,
+      },
+    );
+  }
+
+  Future<AuthStatusModel> requestPasswordReset({
+    required String email,
+  }) async {
+    return _postAuthStatus(
+      '/auth/forgot-password',
+      body: <String, dynamic>{
+        'email': email,
+      },
+    );
+  }
+
+  Future<AuthStatusModel> resetPassword({
+    required String email,
+    required String code,
+    required String newPassword,
+  }) async {
+    return _postAuthStatus(
+      '/auth/reset-password',
+      body: <String, dynamic>{
+        'email': email,
+        'code': code,
+        'new_password': newPassword,
+      },
+    );
+  }
+
+  Future<AuthUserModel> fetchCurrentUser() async {
+    try {
+      final res = await http
+          .get(
+            Uri.parse('$baseUrl/auth/me'),
+            headers: AppEndpoints.apiHeaders(),
+          )
+          .timeout(_requestTimeout);
+
+      if (res.statusCode != 200) {
+        throw Exception(
+          _extractErrorMessage(res.body) ??
+              'Erro ao carregar a sessao (${res.statusCode}).',
+        );
+      }
+
+      return AuthUserModel.fromJson(
+        jsonDecode(res.body) as Map<String, dynamic>,
+      );
+    } on TimeoutException {
+      throw Exception(AppEndpoints.apiUnavailableMessage());
+    } on SocketException {
+      throw Exception(AppEndpoints.apiUnavailableMessage());
+    } on http.ClientException {
+      throw Exception(AppEndpoints.apiUnavailableMessage());
+    }
+  }
+
+  Future<void> logout() async {
+    try {
+      await http
+          .post(
+            Uri.parse('$baseUrl/auth/logout'),
+            headers: AppEndpoints.apiHeaders(),
+          )
+          .timeout(_requestTimeout);
+    } catch (_) {
+      // Ignore remote logout failures because local logout should still work.
+    }
+  }
+
+  Future<AuthSessionModel> _authenticate(
+    String path, {
+    required Map<String, dynamic> body,
+  }) async {
+    try {
+      final res = await http
+          .post(
+            Uri.parse('$baseUrl$path'),
+            headers: AppEndpoints.apiHeaders(includeJsonContentType: true),
+            body: jsonEncode(body),
+          )
+          .timeout(_requestTimeout);
+
+      if (res.statusCode != 200) {
+        throw Exception(
+          _extractErrorMessage(res.body) ??
+              'Erro de autenticacao (${res.statusCode}).',
+        );
+      }
+
+      return AuthSessionModel.fromJson(
+        jsonDecode(res.body) as Map<String, dynamic>,
+      );
+    } on TimeoutException {
+      throw Exception(AppEndpoints.apiUnavailableMessage());
+    } on SocketException {
+      throw Exception(AppEndpoints.apiUnavailableMessage());
+    } on http.ClientException {
+      throw Exception(AppEndpoints.apiUnavailableMessage());
+    }
+  }
+
+  Future<AuthStatusModel> _postAuthStatus(
+    String path, {
+    required Map<String, dynamic> body,
+  }) async {
+    try {
+      final res = await http
+          .post(
+            Uri.parse('$baseUrl$path'),
+            headers: AppEndpoints.apiHeaders(includeJsonContentType: true),
+            body: jsonEncode(body),
+          )
+          .timeout(_requestTimeout);
+
+      if (res.statusCode != 200) {
+        throw Exception(
+          _extractErrorMessage(res.body) ??
+              'Erro de autenticacao (${res.statusCode}).',
+        );
+      }
+
+      return AuthStatusModel.fromJson(
+        jsonDecode(res.body) as Map<String, dynamic>,
+      );
+    } on TimeoutException {
+      throw Exception(AppEndpoints.apiUnavailableMessage());
+    } on SocketException {
+      throw Exception(AppEndpoints.apiUnavailableMessage());
+    } on http.ClientException {
+      throw Exception(AppEndpoints.apiUnavailableMessage());
+    }
+  }
 
   Future<String> createSession() async {
     try {
@@ -220,6 +406,246 @@ class ApiService {
       if (res.statusCode != 200) {
         throw Exception('Erro ao limpar memoria (${res.statusCode}).');
       }
+    } on TimeoutException {
+      throw Exception(AppEndpoints.apiUnavailableMessage());
+    } on SocketException {
+      throw Exception(AppEndpoints.apiUnavailableMessage());
+    } on http.ClientException {
+      throw Exception(AppEndpoints.apiUnavailableMessage());
+    }
+  }
+
+  Future<String> transcribeAudio(Uint8List wavBytes) async {
+    final request = http.MultipartRequest(
+      'POST',
+      Uri.parse('$baseUrl/transcribe'),
+    );
+    request.headers.addAll(AppEndpoints.apiHeaders());
+    request.files.add(
+      http.MultipartFile.fromBytes(
+        'file',
+        wavBytes,
+        filename: 'microphone_test.wav',
+      ),
+    );
+
+    try {
+      final response = await request.send().timeout(_requestTimeout);
+      final body = await response.stream.bytesToString();
+
+      if (response.statusCode != 200) {
+        throw Exception(
+          _extractErrorMessage(body) ??
+              'Erro ao transcrever audio (${response.statusCode}).',
+        );
+      }
+
+      try {
+        final decoded = jsonDecode(body);
+        if (decoded is String) {
+          return decoded.trim();
+        }
+      } catch (_) {
+        return body.trim();
+      }
+
+      return body.trim();
+    } on TimeoutException {
+      throw Exception(AppEndpoints.apiUnavailableMessage());
+    } on SocketException {
+      throw Exception(AppEndpoints.apiUnavailableMessage());
+    } on http.ClientException {
+      throw Exception(AppEndpoints.apiUnavailableMessage());
+    }
+  }
+
+  Future<List<AppSettingEntry>> fetchAppSettings() async {
+    try {
+      final res = await http
+          .get(
+            Uri.parse('$baseUrl/settings'),
+            headers: AppEndpoints.apiHeaders(),
+          )
+          .timeout(_requestTimeout);
+
+      if (res.statusCode != 200) {
+        throw Exception(
+          _extractErrorMessage(res.body) ??
+              'Erro ao carregar configuracoes (${res.statusCode}).',
+        );
+      }
+
+      final data = jsonDecode(res.body) as List<dynamic>;
+      return data
+          .whereType<Map<String, dynamic>>()
+          .map(AppSettingEntry.fromJson)
+          .toList();
+    } on TimeoutException {
+      throw Exception(AppEndpoints.apiUnavailableMessage());
+    } on SocketException {
+      throw Exception(AppEndpoints.apiUnavailableMessage());
+    } on http.ClientException {
+      throw Exception(AppEndpoints.apiUnavailableMessage());
+    }
+  }
+
+  Future<List<AppSettingEntry>> updateAppSettings({
+    required String assistantName,
+    required String userName,
+    required String wakeWordPhrase,
+    required int wakeWordSensitivity,
+    required bool homeAssistantEnabled,
+    required String homeAssistantUrl,
+    required String homeAssistantToken,
+  }) async {
+    final body = jsonEncode({
+      'assistant_name': assistantName,
+      'user_name': userName,
+      'wake_word_phrase': wakeWordPhrase,
+      'wake_word_sensitivity': wakeWordSensitivity,
+      'home_assistant_enabled': homeAssistantEnabled,
+      'home_assistant_url': homeAssistantUrl,
+      'home_assistant_token': homeAssistantToken,
+    });
+
+    try {
+      final res = await http
+          .put(
+            Uri.parse('$baseUrl/settings'),
+            headers: AppEndpoints.apiHeaders(includeJsonContentType: true),
+            body: body,
+          )
+          .timeout(_requestTimeout);
+
+      if (res.statusCode != 200) {
+        throw Exception(
+          _extractErrorMessage(res.body) ??
+              'Erro ao guardar configuracoes (${res.statusCode}).',
+        );
+      }
+
+      final data = jsonDecode(res.body) as List<dynamic>;
+      return data
+          .whereType<Map<String, dynamic>>()
+          .map(AppSettingEntry.fromJson)
+          .toList();
+    } on TimeoutException {
+      throw Exception(AppEndpoints.apiUnavailableMessage());
+    } on SocketException {
+      throw Exception(AppEndpoints.apiUnavailableMessage());
+    } on http.ClientException {
+      throw Exception(AppEndpoints.apiUnavailableMessage());
+    }
+  }
+
+  Future<int> clearAppSettings() async {
+    try {
+      final res = await http
+          .delete(
+            Uri.parse('$baseUrl/settings'),
+            headers: AppEndpoints.apiHeaders(),
+          )
+          .timeout(_requestTimeout);
+
+      if (res.statusCode != 200) {
+        throw Exception(
+          _extractErrorMessage(res.body) ??
+              'Erro ao limpar configuracoes (${res.statusCode}).',
+        );
+      }
+
+      final data = jsonDecode(res.body) as Map<String, dynamic>;
+      return (data['count'] as num?)?.toInt() ?? 0;
+    } on TimeoutException {
+      throw Exception(AppEndpoints.apiUnavailableMessage());
+    } on SocketException {
+      throw Exception(AppEndpoints.apiUnavailableMessage());
+    } on http.ClientException {
+      throw Exception(AppEndpoints.apiUnavailableMessage());
+    }
+  }
+
+  Future<List<RegisteredDevice>> fetchRegisteredDevices() async {
+    try {
+      final res = await http
+          .get(
+            Uri.parse('$baseUrl/devices'),
+            headers: AppEndpoints.apiHeaders(),
+          )
+          .timeout(_requestTimeout);
+
+      if (res.statusCode != 200) {
+        throw Exception(
+          _extractErrorMessage(res.body) ??
+              'Erro ao carregar dispositivos (${res.statusCode}).',
+        );
+      }
+
+      final data = jsonDecode(res.body) as List<dynamic>;
+      return data
+          .whereType<Map<String, dynamic>>()
+          .map(RegisteredDevice.fromJson)
+          .toList();
+    } on TimeoutException {
+      throw Exception(AppEndpoints.apiUnavailableMessage());
+    } on SocketException {
+      throw Exception(AppEndpoints.apiUnavailableMessage());
+    } on http.ClientException {
+      throw Exception(AppEndpoints.apiUnavailableMessage());
+    }
+  }
+
+  Future<RegisteredDevice> updateRegisteredDevice(
+    String deviceId, {
+    String? name,
+    String? location,
+    String? platform,
+    bool? isActive,
+    bool? preferredForWakeWord,
+    bool? preferredForTts,
+    bool? preferredForDesktopControl,
+  }) async {
+    final payload = <String, dynamic>{};
+    if (name != null) {
+      payload['name'] = name;
+    }
+    if (location != null) {
+      payload['location'] = location;
+    }
+    if (platform != null) {
+      payload['platform'] = platform;
+    }
+    if (isActive != null) {
+      payload['is_active'] = isActive;
+    }
+    if (preferredForWakeWord != null) {
+      payload['preferred_for_wake_word'] = preferredForWakeWord;
+    }
+    if (preferredForTts != null) {
+      payload['preferred_for_tts'] = preferredForTts;
+    }
+    if (preferredForDesktopControl != null) {
+      payload['preferred_for_desktop_control'] = preferredForDesktopControl;
+    }
+
+    try {
+      final res = await http
+          .put(
+            Uri.parse('$baseUrl/devices/${Uri.encodeComponent(deviceId)}'),
+            headers: AppEndpoints.apiHeaders(includeJsonContentType: true),
+            body: jsonEncode(payload),
+          )
+          .timeout(_requestTimeout);
+
+      if (res.statusCode != 200) {
+        throw Exception(
+          _extractErrorMessage(res.body) ??
+              'Erro ao atualizar dispositivo (${res.statusCode}).',
+        );
+      }
+
+      final data = jsonDecode(res.body) as Map<String, dynamic>;
+      return RegisteredDevice.fromJson(data);
     } on TimeoutException {
       throw Exception(AppEndpoints.apiUnavailableMessage());
     } on SocketException {

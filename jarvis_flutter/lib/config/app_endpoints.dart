@@ -3,6 +3,7 @@ class AppEndpoints {
     'JARVIS_API_TOKEN',
     defaultValue: '',
   );
+  static String _runtimeApiToken = '';
 
   static const String apiBaseUrl = String.fromEnvironment(
     'JARVIS_API_BASE_URL',
@@ -22,6 +23,14 @@ class AppEndpoints {
     return _connectionHint(agentBaseUrl, 'JARVIS_AGENT_BASE_URL');
   }
 
+  static void setRuntimeApiToken(String token) {
+    _runtimeApiToken = token.trim();
+  }
+
+  static void clearRuntimeApiToken() {
+    _runtimeApiToken = '';
+  }
+
   static String _connectionHint(String baseUrl, String dartDefine) {
     final uri = Uri.tryParse(baseUrl);
     final host = uri?.host ?? '';
@@ -39,8 +48,11 @@ class AppEndpoints {
     if (includeJsonContentType) {
       headers['Content-Type'] = 'application/json';
     }
-    if (apiToken.trim().isNotEmpty) {
-      headers['Authorization'] = 'Bearer ${apiToken.trim()}';
+    final token = _runtimeApiToken.trim().isNotEmpty
+        ? _runtimeApiToken.trim()
+        : apiToken.trim();
+    if (token.isNotEmpty) {
+      headers['Authorization'] = 'Bearer $token';
     }
     return headers;
   }

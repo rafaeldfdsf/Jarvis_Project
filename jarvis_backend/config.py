@@ -81,10 +81,26 @@ class Settings:
     openai_tts_instructions: str
     api_token: str
     log_level: str
+    app_name: str
+    smtp_host: str
+    smtp_port: int
+    smtp_username: str
+    smtp_password: str
+    smtp_from_email: str
+    smtp_from_name: str
+    smtp_use_tls: bool
 
     @property
     def api_auth_enabled(self) -> bool:
         return bool(self.api_token)
+
+    @property
+    def smtp_enabled(self) -> bool:
+        return bool(
+            self.smtp_host and
+            self.smtp_port > 0 and
+            self.smtp_from_email
+        )
 
 
 settings = Settings(
@@ -124,6 +140,14 @@ settings = Settings(
     ),
     api_token=_env_str("JARVIS_API_TOKEN", default=""),
     log_level=_env_str("JARVIS_LOG_LEVEL", "LOG_LEVEL", default="INFO").upper(),
+    app_name=_env_str("JARVIS_APP_NAME", default="Jarvis"),
+    smtp_host=_env_str("JARVIS_SMTP_HOST", default=""),
+    smtp_port=_env_int("JARVIS_SMTP_PORT", default=587),
+    smtp_username=_env_str("JARVIS_SMTP_USERNAME", default=""),
+    smtp_password=_env_str("JARVIS_SMTP_PASSWORD", default=""),
+    smtp_from_email=_env_str("JARVIS_SMTP_FROM_EMAIL", default=""),
+    smtp_from_name=_env_str("JARVIS_SMTP_FROM_NAME", default="Jarvis"),
+    smtp_use_tls=_env_bool("JARVIS_SMTP_USE_TLS", default=True),
 )
 
 
@@ -145,6 +169,7 @@ OPENAI_TTS_VOICE = settings.openai_tts_voice
 OPENAI_TTS_INSTRUCTIONS = settings.openai_tts_instructions
 API_TOKEN = settings.api_token
 LOG_LEVEL = settings.log_level
+APP_NAME = settings.app_name
 
 # Flag global usada para interromper o TTS (barge-in)
 STOP_TTS = False

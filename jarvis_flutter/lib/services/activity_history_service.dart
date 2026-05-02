@@ -273,6 +273,22 @@ class ActivityHistoryService extends ChangeNotifier {
     await file.writeAsString(payload, flush: true);
   }
 
+  Future<void> resetForAccountSwitch() async {
+    _entries.clear();
+    _loading = false;
+    _loadedOnce = false;
+    _error = null;
+
+    try {
+      final file = await _storageFile();
+      if (await file.exists()) {
+        await file.delete();
+      }
+    } catch (_) {}
+
+    notifyListeners();
+  }
+
   Future<File> _storageFile() async {
     final directory = await getApplicationDocumentsDirectory();
     return File('${directory.path}${Platform.pathSeparator}$_storageFileName');

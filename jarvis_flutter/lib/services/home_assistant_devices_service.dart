@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 
 import '../models/home_assistant_device.dart';
+import 'app_settings_service.dart';
 import 'api_service.dart';
 import 'log_service.dart';
 
@@ -15,24 +16,75 @@ class HomeAssistantDevicesService extends ChangeNotifier {
   HomeAssistantDevicesService._internal();
 
   final ApiService _api = ApiService();
+  final AppSettingsService _settings = AppSettingsService();
   final LogService _logService = LogService();
   final List<HomeAssistantDevice> _devices = [];
 
   bool _loading = false;
   bool _loadedOnce = false;
+  bool _homeAssistantEnabled = false;
+  bool _homeAssistantConfigured = false;
   String? _error;
 
   List<HomeAssistantDevice> get devices => List.unmodifiable(_devices);
   bool get loading => _loading;
   String? get error => _error;
+  bool get homeAssistantAvailable =>
+      _homeAssistantEnabled && _homeAssistantConfigured;
+  String? get unavailableMessage {
+    if (homeAssistantAvailable) {
+      return null;
+    }
+    if (!_homeAssistantEnabled) {
+      return 'O Home Assistant esta desativado nas configuracoes.';
+    }
+    return 'Configura URL e token do Home Assistant para sincronizar dispositivos.';
+  }
+
+  void refreshAvailability() {
+    final enabled = _settings.homeAssistantEnabled;
+    final configured =
+        _settings.homeAssistantUrl.isNotEmpty &&
+        _settings.homeAssistantToken.isNotEmpty;
+    final changed =
+        enabled != _homeAssistantEnabled ||
+        configured != _homeAssistantConfigured;
+
+    _homeAssistantEnabled = enabled;
+    _homeAssistantConfigured = configured;
+
+    if (!homeAssistantAvailable) {
+      _devices.clear();
+      _error = null;
+      _loading = false;
+      _loadedOnce = false;
+      if (changed) {
+        notifyListeners();
+      }
+      return;
+    }
+
+    if (changed) {
+      _loadedOnce = false;
+      notifyListeners();
+    }
+  }
 
   Future<void> load({bool force = false}) async {
+    refreshAvailability();
+    if (!homeAssistantAvailable) {
+      return;
+    }
     if (_loading) return;
     if (_loadedOnce && !force) return;
     await refresh();
   }
 
   Future<void> refresh() async {
+    refreshAvailability();
+    if (!homeAssistantAvailable) {
+      return;
+    }
     _loading = true;
     _error = null;
     notifyListeners();
@@ -54,6 +106,12 @@ class HomeAssistantDevicesService extends ChangeNotifier {
   }
 
   Future<bool> sync() async {
+    refreshAvailability();
+    if (!homeAssistantAvailable) {
+      _error = unavailableMessage;
+      notifyListeners();
+      return false;
+    }
     _loading = true;
     _error = null;
     notifyListeners();
@@ -77,6 +135,12 @@ class HomeAssistantDevicesService extends ChangeNotifier {
   }
 
   Future<bool> updateAlias(String entityId, String alias) async {
+    refreshAvailability();
+    if (!homeAssistantAvailable) {
+      _error = unavailableMessage;
+      notifyListeners();
+      return false;
+    }
     _loading = true;
     _error = null;
     notifyListeners();
@@ -102,6 +166,12 @@ class HomeAssistantDevicesService extends ChangeNotifier {
   }
 
   Future<bool> deleteDevice(String entityId) async {
+    refreshAvailability();
+    if (!homeAssistantAvailable) {
+      _error = unavailableMessage;
+      notifyListeners();
+      return false;
+    }
     _loading = true;
     _error = null;
     notifyListeners();
@@ -122,6 +192,12 @@ class HomeAssistantDevicesService extends ChangeNotifier {
   }
 
   Future<int?> clearAll() async {
+    refreshAvailability();
+    if (!homeAssistantAvailable) {
+      _error = unavailableMessage;
+      notifyListeners();
+      return null;
+    }
     _loading = true;
     _error = null;
     notifyListeners();
@@ -139,6 +215,16 @@ class HomeAssistantDevicesService extends ChangeNotifier {
       _loading = false;
       notifyListeners();
     }
+  }
+
+  void resetForAccountSwitch() {
+    _devices.clear();
+    _loading = false;
+    _loadedOnce = false;
+    _homeAssistantEnabled = false;
+    _homeAssistantConfigured = false;
+    _error = null;
+    notifyListeners();
   }
 
   String _normalizeError(Object error) {

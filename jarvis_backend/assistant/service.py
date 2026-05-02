@@ -335,6 +335,7 @@ def build_client_action(tool_call: dict) -> dict | None:
 @dataclass
 class SessionState:
     messages: list[dict]
+    user_id: str | None = None
     lock: Lock = field(default_factory=Lock)
 
 
@@ -350,12 +351,13 @@ class AssistantService:
         self.sessions_lock = Lock()
         init_db()
 
-    def create_session(self) -> dict:
+    def create_session(self, user_id: str | None = None) -> dict:
         session_id = str(uuid4())
         state = SessionState(
             messages=[
-                {"role": "system", "content": build_system_prompt(self.available_tools)}
-            ]
+                {"role": "system", "content": build_system_prompt(self.available_tools, user_id=user_id)}
+            ],
+            user_id=(user_id or "").strip() or None,
         )
 
         with self.sessions_lock:
@@ -481,7 +483,7 @@ class AssistantService:
             if any(x in msg for x in ["memoria", "lembretes", "preferencias"]) and any(
                 y in msg for y in ["mostra", "lista", "ver", "mostrar"]
             ):
-                facts = load_facts()
+                facts = load_facts(user_id=session_state.user_id)
                 table_format = "tabela" in msg or "table" in msg
 
                 if table_format:
@@ -525,17 +527,17 @@ class AssistantService:
             match = re.search(r"(?:remove|remover)\s+preferencia\s+(\d+)", msg, re.IGNORECASE)
             if match:
                 index = int(match.group(1))
-                delete_preference(index)
+                delete_preference(index, user_id=session_state.user_id)
                 return response_payload(f"Preferencia {index} removida da memoria.")
 
             match = re.search(r"(?:remove|remover)\s+lembrete\s+(\d+)", msg, re.IGNORECASE)
             if match:
                 index = int(match.group(1))
-                delete_reminder(index)
+                delete_reminder(index, user_id=session_state.user_id)
                 return response_payload(f"Lembrete {index} removido da memoria.")
 
             if matches_memory_clear_command(msg):
-                deleted_count = clear_memory()
+                deleted_count = clear_memory(user_id=session_state.user_id)
                 reply = "Toda a memoria foi limpa."
                 if deleted_count == 0:
                     reply = "Nao havia memoria guardada para limpar."
@@ -545,7 +547,7 @@ class AssistantService:
                 day_offset = parse_day(msg)
                 city = "Lisboa"
 
-                facts = load_facts()
+                facts = load_facts(user_id=session_state.user_id)
                 for pref in facts.get("preferences", []):
                     if "tempo" in pref.lower() and "caldas da rainha" in pref.lower():
                         city = "caldas da rainha"
@@ -572,8 +574,11 @@ class AssistantService:
                 return response_payload(call_llm(messages), tool_call=tool_call, tool_result=executed_tool)
 
             messages.append({"role": "user", "content": user_message})
-            extract_user_facts(user_message)
-            messages[0]["content"] = build_system_prompt(self.available_tools)
+            extract_user_facts(user_message, user_id=session_state.user_id)
+            messages[0]["content"] = build_system_prompt(
+                self.available_tools,
+                user_id=session_state.user_id,
+            )
 
             first_reply = call_llm(messages)
             parsed = None
@@ -625,6 +630,7 @@ class AssistantService:
                             tool_name,
                             args,
                             allow_desktop_tools=self.enable_desktop_tools,
+                            user_id=session_state.user_id,
                         )
                         messages.append({"role": "assistant", "content": json.dumps(tool_call, ensure_ascii=False)})
                         messages.append({"role": "tool", "content": json.dumps(executed_tool, ensure_ascii=False)})

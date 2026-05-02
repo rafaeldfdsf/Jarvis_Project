@@ -20,12 +20,14 @@ class AssistantRuntimeService extends ChangeNotifier {
   final AppSettingsService _settings = AppSettingsService();
   final WakeWordService _wakeWordService = WakeWordService();
 
+  bool _authenticated = false;
   bool _initialized = false;
   bool _initializing = false;
   bool _captureInProgress = false;
   bool _wakeWordEnabled = Platform.isWindows;
   bool _wakeWordReady = false;
   String _lastWakeWordPhrase = AppSettingsService.defaultAssistantName;
+  int _lastWakeWordSensitivity = 40;
 
   bool get wakeWordEnabled => _wakeWordEnabled;
   bool get wakeWordReady => _wakeWordReady;
@@ -39,11 +41,35 @@ class AssistantRuntimeService extends ChangeNotifier {
     _initializing = true;
     await _settings.load();
     _lastWakeWordPhrase = _settings.wakeWordPhrase;
+    _lastWakeWordSensitivity = _settings.wakeWordSensitivity;
     _settings.addListener(_handleSettingsChanged);
     _initialized = true;
     _initializing = false;
     notifyListeners();
-    await ensureWakeWordListening();
+    if (_authenticated) {
+      await ensureWakeWordListening();
+    }
+  }
+
+  Future<void> setAuthenticated(bool authenticated) async {
+    _authenticated = authenticated;
+
+    if (!authenticated) {
+      _captureInProgress = false;
+      _wakeWordReady = false;
+      notifyListeners();
+      await _wakeWordService.cancel();
+      return;
+    }
+
+    await _settings.load(force: true);
+    _lastWakeWordPhrase = _settings.wakeWordPhrase;
+    _lastWakeWordSensitivity = _settings.wakeWordSensitivity;
+    notifyListeners();
+
+    if (_initialized) {
+      await ensureWakeWordListening(forceRestart: true);
+    }
   }
 
   Future<void> setWakeWordEnabled(bool enabled) async {
@@ -73,7 +99,12 @@ class AssistantRuntimeService extends ChangeNotifier {
   }
 
   Future<void> ensureWakeWordListening({bool forceRestart = false}) async {
-    if (!_wakeWordEnabled || _captureInProgress || !Platform.isWindows) {
+    if (
+      !_authenticated ||
+      !_wakeWordEnabled ||
+      _captureInProgress ||
+      !Platform.isWindows
+    ) {
       return;
     }
 
@@ -86,6 +117,7 @@ class AssistantRuntimeService extends ChangeNotifier {
     final started = await _wakeWordService.startListening(
       onWakeWordDetected: _handleWakeWordDetected,
       keyword: _settings.wakeWordPhrase,
+      sensitivity: _settings.wakeWordSensitivity,
     );
 
     if (_wakeWordReady != started) {
@@ -108,11 +140,16 @@ class AssistantRuntimeService extends ChangeNotifier {
 
   void _handleSettingsChanged() {
     final updatedWakeWordPhrase = _settings.wakeWordPhrase;
-    if (_lastWakeWordPhrase == updatedWakeWordPhrase) {
+    final updatedWakeWordSensitivity = _settings.wakeWordSensitivity;
+    if (
+      _lastWakeWordPhrase == updatedWakeWordPhrase &&
+      _lastWakeWordSensitivity == updatedWakeWordSensitivity
+    ) {
       return;
     }
 
     _lastWakeWordPhrase = updatedWakeWordPhrase;
+    _lastWakeWordSensitivity = updatedWakeWordSensitivity;
     if (_wakeWordEnabled && !_captureInProgress) {
       unawaited(ensureWakeWordListening(forceRestart: true));
     }

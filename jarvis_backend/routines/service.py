@@ -4,27 +4,29 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import json
-import sqlite3
 from typing import Any
 from uuid import uuid4
 
-from config import DB_FILE
+from db_utils import connect
 from home_assistant.service import call_service
 
 
 def _connect():
-    conn = sqlite3.connect(DB_FILE)
-    conn.row_factory = sqlite3.Row
+    conn = connect()
     return conn
 
 
-def init_routines_db() -> None:
-    conn = _connect()
-    cursor = conn.cursor()
+def _table_columns(cursor, table_name: str) -> set[str]:
+    cursor.execute(f"PRAGMA table_info({table_name})")
+    return {row["name"] for row in cursor.fetchall()}
+
+
+def _ensure_routines_schema(cursor) -> None:
     cursor.execute(
         """
         CREATE TABLE IF NOT EXISTS routines (
             id TEXT PRIMARY KEY,
+            user_id TEXT,
             name TEXT NOT NULL,
             description TEXT NOT NULL DEFAULT '',
             trigger_text TEXT NOT NULL DEFAULT '',
@@ -35,8 +37,51 @@ def init_routines_db() -> None:
         )
         """
     )
+
+    columns = _table_columns(cursor, "routines")
+    if "user_id" in columns:
+        return
+
+    cursor.execute("ALTER TABLE routines RENAME TO routines_legacy")
+    cursor.execute(
+        """
+        CREATE TABLE routines (
+            id TEXT PRIMARY KEY,
+            user_id TEXT,
+            name TEXT NOT NULL,
+            description TEXT NOT NULL DEFAULT '',
+            trigger_text TEXT NOT NULL DEFAULT '',
+            actions_json TEXT NOT NULL DEFAULT '[]',
+            enabled INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    cursor.execute(
+        """
+        INSERT INTO routines (
+            id, user_id, name, description, trigger_text, actions_json, enabled, created_at, updated_at
+        )
+        SELECT id, NULL, name, description, trigger_text, actions_json, enabled, created_at, updated_at
+        FROM routines_legacy
+        """
+    )
+    cursor.execute("DROP TABLE routines_legacy")
+
+
+def init_routines_db() -> None:
+    conn = _connect()
+    cursor = conn.cursor()
+    _ensure_routines_schema(cursor)
     conn.commit()
     conn.close()
+
+
+def _user_filter_sql(user_id: str | None) -> tuple[str, tuple[object, ...]]:
+    if user_id is None:
+        return "user_id IS NULL", ()
+    return "user_id = ?", ((user_id or "").strip(),)
 
 
 def _now_iso() -> str:
@@ -76,7 +121,7 @@ def _normalize_actions(actions: list[dict[str, Any]] | None) -> list[dict[str, A
     return normalized
 
 
-def _row_to_routine(row: sqlite3.Row) -> dict[str, Any]:
+def _row_to_routine(row) -> dict[str, Any]:
     actions = json.loads(row["actions_json"] or "[]")
     if not isinstance(actions, list):
         actions = []
@@ -93,33 +138,37 @@ def _row_to_routine(row: sqlite3.Row) -> dict[str, Any]:
     }
 
 
-def list_routines() -> list[dict[str, Any]]:
+def list_routines(user_id: str | None = None) -> list[dict[str, Any]]:
     init_routines_db()
     conn = _connect()
     cursor = conn.cursor()
+    where_sql, params = _user_filter_sql(user_id)
     cursor.execute(
-        """
+        f"""
         SELECT id, name, description, trigger_text, actions_json, enabled, created_at, updated_at
         FROM routines
+        WHERE {where_sql}
         ORDER BY updated_at DESC, name COLLATE NOCASE ASC
-        """
+        """,
+        params,
     )
     rows = cursor.fetchall()
     conn.close()
     return [_row_to_routine(row) for row in rows]
 
 
-def get_routine(routine_id: str) -> dict[str, Any] | None:
+def get_routine(routine_id: str, user_id: str | None = None) -> dict[str, Any] | None:
     init_routines_db()
     conn = _connect()
     cursor = conn.cursor()
+    where_sql, params = _user_filter_sql(user_id)
     cursor.execute(
-        """
+        f"""
         SELECT id, name, description, trigger_text, actions_json, enabled, created_at, updated_at
         FROM routines
-        WHERE id = ?
+        WHERE id = ? AND {where_sql}
         """,
-        (routine_id,),
+        (routine_id, *params),
     )
     row = cursor.fetchone()
     conn.close()
@@ -133,6 +182,7 @@ def create_routine(
     trigger_text: str = "",
     actions: list[dict[str, Any]] | None = None,
     enabled: bool = True,
+    user_id: str | None = None,
 ) -> dict[str, Any]:
     init_routines_db()
     clean_name = name.strip()
@@ -148,11 +198,12 @@ def create_routine(
     cursor.execute(
         """
         INSERT INTO routines (
-            id, name, description, trigger_text, actions_json, enabled, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            id, user_id, name, description, trigger_text, actions_json, enabled, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             routine_id,
+            (user_id or "").strip() or None,
             clean_name,
             description.strip(),
             trigger_text.strip(),
@@ -164,7 +215,7 @@ def create_routine(
     )
     conn.commit()
     conn.close()
-    return get_routine(routine_id) or {}
+    return get_routine(routine_id, user_id=user_id) or {}
 
 
 def update_routine(
@@ -175,6 +226,7 @@ def update_routine(
     trigger_text: str = "",
     actions: list[dict[str, Any]] | None = None,
     enabled: bool = True,
+    user_id: str | None = None,
 ) -> dict[str, Any]:
     init_routines_db()
     clean_name = name.strip()
@@ -183,14 +235,15 @@ def update_routine(
 
     normalized_actions = _normalize_actions(actions)
     now = _now_iso()
+    where_sql, params = _user_filter_sql(user_id)
 
     conn = _connect()
     cursor = conn.cursor()
     cursor.execute(
-        """
+        f"""
         UPDATE routines
         SET name = ?, description = ?, trigger_text = ?, actions_json = ?, enabled = ?, updated_at = ?
-        WHERE id = ?
+        WHERE id = ? AND {where_sql}
         """,
         (
             clean_name,
@@ -200,6 +253,7 @@ def update_routine(
             1 if enabled else 0,
             now,
             routine_id,
+            *params,
         ),
     )
     updated = cursor.rowcount > 0
@@ -207,23 +261,27 @@ def update_routine(
     conn.close()
     if not updated:
         raise KeyError(f"Rotina nao encontrada: {routine_id}")
-    return get_routine(routine_id) or {}
+    return get_routine(routine_id, user_id=user_id) or {}
 
 
-def delete_routine(routine_id: str) -> bool:
+def delete_routine(routine_id: str, user_id: str | None = None) -> bool:
     init_routines_db()
     conn = _connect()
     cursor = conn.cursor()
-    cursor.execute("DELETE FROM routines WHERE id = ?", (routine_id,))
+    where_sql, params = _user_filter_sql(user_id)
+    cursor.execute(
+        f"DELETE FROM routines WHERE id = ? AND {where_sql}",
+        (routine_id, *params),
+    )
     deleted = cursor.rowcount > 0
     conn.commit()
     conn.close()
     return deleted
 
 
-def run_routine(routine_id: str) -> dict[str, Any]:
+def run_routine(routine_id: str, user_id: str | None = None) -> dict[str, Any]:
     init_routines_db()
-    routine = get_routine(routine_id)
+    routine = get_routine(routine_id, user_id=user_id)
     if not routine:
         raise KeyError(f"Rotina nao encontrada: {routine_id}")
 
@@ -241,6 +299,7 @@ def run_routine(routine_id: str) -> dict[str, Any]:
                         action.get("service", ""),
                         entity_id=action.get("entity_id"),
                         service_data=action.get("service_data"),
+                        user_id=user_id,
                     ),
                 }
             )

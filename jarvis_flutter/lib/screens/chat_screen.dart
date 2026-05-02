@@ -297,6 +297,7 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _captureVoiceInput() async {
     final capture = await voiceService.captureSpeechTurn(
       maxInitialWait: const Duration(seconds: 6),
+      inputDeviceId: settings.microphoneDeviceId,
     );
 
     if (!mounted) {

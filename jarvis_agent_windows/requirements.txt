@@ -8,3 +8,4 @@ sounddevice
 faster-whisper
 silero-vad
 rapidfuzz
+websockets

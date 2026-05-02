@@ -7,6 +7,7 @@ import 'package:window_manager/window_manager.dart';
 
 import 'activity_history_screen.dart';
 import 'assistant_memory_screen.dart';
+import '../services/auth_service.dart';
 import '../services/assistant_runtime_service.dart';
 import '../services/app_settings_service.dart';
 import '../services/app_shell_service.dart';
@@ -27,6 +28,7 @@ class AppShell extends StatefulWidget {
 }
 
 class _AppShellState extends State<AppShell> with WindowListener, TrayListener {
+  final AuthService _auth = AuthService();
   final AssistantRuntimeService _runtime = AssistantRuntimeService();
   final AppSettingsService _settings = AppSettingsService();
   final AppShellService _shellService = AppShellService();
@@ -327,11 +329,14 @@ class _AppShellState extends State<AppShell> with WindowListener, TrayListener {
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
-      animation: Listenable.merge([_settings, _shellService]),
+      animation: Listenable.merge([_settings, _shellService, _auth]),
       builder: (context, _) {
         final isWide = MediaQuery.sizeOf(context).width >= 980;
         final isVoiceOverlayMode = _shellService.voiceOverlayMode;
         final assistantName = _settings.assistantName;
+        final accountName = (_auth.user?.displayName ?? '').trim().isNotEmpty
+            ? _auth.user!.displayName
+            : (_auth.user?.email ?? '');
         final selectedIndex = isVoiceOverlayMode
             ? AppSection.voice.index
             : _selectedSection.index;
@@ -372,6 +377,8 @@ class _AppShellState extends State<AppShell> with WindowListener, TrayListener {
                   elevation: 0,
                   child: _DrawerMenu(
                     assistantName: assistantName,
+                    accountName: accountName,
+                    onLogout: _auth.loading ? null : () => unawaited(_auth.logout()),
                     selectedSection: _selectedSection,
                     onSectionSelected: (section) {
                       Navigator.of(context).pop();
@@ -404,6 +411,8 @@ class _AppShellState extends State<AppShell> with WindowListener, TrayListener {
                       children: [
                         _SidebarMenu(
                           assistantName: assistantName,
+                          accountName: accountName,
+                          onLogout: _auth.loading ? null : () => unawaited(_auth.logout()),
                           selectedSection: _selectedSection,
                           onSectionSelected: _selectSection,
                         ),
@@ -499,11 +508,15 @@ class _AppShellState extends State<AppShell> with WindowListener, TrayListener {
 class _SidebarMenu extends StatelessWidget {
   const _SidebarMenu({
     required this.assistantName,
+    required this.accountName,
+    required this.onLogout,
     required this.selectedSection,
     required this.onSectionSelected,
   });
 
   final String assistantName;
+  final String accountName;
+  final VoidCallback? onLogout;
   final AppSection selectedSection;
   final ValueChanged<AppSection> onSectionSelected;
 
@@ -522,7 +535,11 @@ class _SidebarMenu extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              _BrandPanel(assistantName: assistantName),
+              _BrandPanel(
+                assistantName: assistantName,
+                accountName: accountName,
+                onLogout: onLogout,
+              ),
               const SizedBox(height: 28),
               Text(
                 'NAVEGACAO',
@@ -585,11 +602,15 @@ class _SidebarMenu extends StatelessWidget {
 class _DrawerMenu extends StatelessWidget {
   const _DrawerMenu({
     required this.assistantName,
+    required this.accountName,
+    required this.onLogout,
     required this.selectedSection,
     required this.onSectionSelected,
   });
 
   final String assistantName;
+  final String accountName;
+  final VoidCallback? onLogout;
   final AppSection selectedSection;
   final ValueChanged<AppSection> onSectionSelected;
 
@@ -611,7 +632,12 @@ class _DrawerMenu extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  _BrandPanel(assistantName: assistantName, compact: true),
+                  _BrandPanel(
+                    assistantName: assistantName,
+                    accountName: accountName,
+                    onLogout: onLogout,
+                    compact: true,
+                  ),
                   const SizedBox(height: 24),
                   for (final section in AppSection.values) ...[
                     _NavButton(
@@ -636,10 +662,14 @@ class _DrawerMenu extends StatelessWidget {
 class _BrandPanel extends StatelessWidget {
   const _BrandPanel({
     required this.assistantName,
+    required this.accountName,
+    required this.onLogout,
     this.compact = false,
   });
 
   final String assistantName;
+  final String accountName;
+  final VoidCallback? onLogout;
   final bool compact;
 
   @override
@@ -676,6 +706,36 @@ class _BrandPanel extends StatelessWidget {
               height: 1.5,
             ),
           ),
+          if (accountName.trim().isNotEmpty) ...[
+            const SizedBox(height: 14),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.04),
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(color: Colors.white.withOpacity(0.08)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    accountName,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  FilledButton.tonalIcon(
+                    onPressed: onLogout,
+                    icon: const Icon(Icons.logout_rounded),
+                    label: const Text('Terminar sessao'),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ],
       ),
     );
