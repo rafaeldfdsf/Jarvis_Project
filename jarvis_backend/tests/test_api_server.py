@@ -1,6 +1,6 @@
 from dataclasses import replace
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
 
@@ -172,6 +172,113 @@ class ApiServerTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["audio"], "ZmFrZS1hdWRpbw==")
         mock_tts.assert_called_once_with("ola")
+
+    @patch("api.server.list_settings", return_value=[
+        {
+            "key": "assistant_name",
+            "value": "Daniel",
+            "label": "Nome do Assistente",
+            "updated_at": "2026-05-02T12:00:00+00:00",
+        }
+    ])
+    def test_get_settings_with_auth(self, mock_list_settings):
+        response = self.client.get("/settings", headers=self.auth_headers())
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()[0]["value"], "Daniel")
+        mock_list_settings.assert_called_once()
+
+    @patch("api.server.update_settings", return_value=[
+        {
+            "key": "assistant_name",
+            "value": "Daniel",
+            "label": "Nome do Assistente",
+            "updated_at": "2026-05-02T12:00:00+00:00",
+        }
+    ])
+    def test_put_settings_with_auth(self, mock_update_settings):
+        response = self.client.put(
+            "/settings",
+            headers=self.auth_headers(),
+            json={
+                "assistant_name": "Daniel",
+                "user_name": "Rafael",
+                "wake_word_phrase": "Daniel",
+                "home_assistant_enabled": False,
+                "home_assistant_url": "",
+                "home_assistant_token": "",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()[0]["key"], "assistant_name")
+        mock_update_settings.assert_called_once()
+
+    @patch("api.server.list_registered_devices", return_value=[
+        {
+            "device_id": "pc-escritorio",
+            "name": "PC Escritorio",
+            "device_type": "windows",
+            "platform": "windows",
+            "location": "escritorio",
+            "is_active": True,
+            "preferred_for_wake_word": False,
+            "preferred_for_tts": False,
+            "preferred_for_desktop_control": True,
+            "connected": True,
+            "last_seen_at": "2026-05-02T12:00:00+00:00",
+            "last_error": "",
+            "metadata": {},
+            "capabilities": ["desktop.control"],
+            "created_at": "2026-05-02T12:00:00+00:00",
+            "updated_at": "2026-05-02T12:00:00+00:00",
+        }
+    ])
+    def test_get_devices_with_auth(self, mock_list_devices):
+        response = self.client.get("/devices", headers=self.auth_headers())
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()[0]["device_id"], "pc-escritorio")
+        mock_list_devices.assert_called_once()
+
+    @patch.object(
+        server.agent_gateway,
+        "dispatch_action",
+        new_callable=AsyncMock,
+        return_value={
+            "ok": True,
+            "device_id": "pc-escritorio",
+            "result": {"ok": True, "app": "spotify"},
+            "error": None,
+        },
+    )
+    @patch.object(
+        server.assistant,
+        "chat",
+        return_value={
+            "session_id": "sess-1",
+            "reply": "A abrir o Spotify.",
+            "tool_result": None,
+            "desktop_tools_enabled": False,
+            "client_action": {
+                "type": "pc_action",
+                "action": "open_app",
+                "arguments": {"app_name": "spotify"},
+            },
+        },
+    )
+    def test_chat_dispatches_client_action_to_connected_agent(self, mock_chat, mock_dispatch):
+        response = self.client.post(
+            "/chat",
+            headers=self.auth_headers(),
+            json={"session_id": "sess-1", "message": "abre o spotify"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(response.json()["client_action"])
+        self.assertEqual(response.json()["tool_result"]["tool_name"], "open_app")
+        mock_dispatch.assert_awaited_once()
+        mock_chat.assert_called_once()
 
 
 if __name__ == "__main__":

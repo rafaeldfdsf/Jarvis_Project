@@ -5,10 +5,12 @@ Workspace com tres modulos separados:
 - `jarvis_backend`: API FastAPI, orquestracao do assistente, memoria e integracao com LLM/STT/TTS.
 - `jarvis_agent_windows`: agente local Windows para automacoes desktop e wake word.
 - `jarvis_flutter`: app Flutter para chat e modo voz.
+- `jarvis_agent_pi`: agente base para Raspberry Pi ligado ao core por WebSocket.
 
 Documentacao de continuidade:
 
 - `MANUAL_DE_CONTINUIDADE.md`: manual tecnico completo com arquitetura, estrutura e explicacao modulo a modulo.
+- `PLANO_REFACTOR_ARQUITETURA.md`: proposta concreta para evoluir de app + backend + agente local para core central + agentes residentes + consola de gestao.
 
 ## Pre-requisitos
 
@@ -21,7 +23,7 @@ Documentacao de continuidade:
 ## Ordem de arranque
 
 1. Levantar o backend
-2. Levantar o agente Windows
+2. Levantar o agente Windows e/ou o agente Raspberry Pi
 3. Arrancar a app Flutter
 
 ## Backend
@@ -54,6 +56,28 @@ pip install -r requirements.txt
 uvicorn agent:app --host 0.0.0.0 --port 5001
 ```
 
+Variaveis uteis:
+
+- `JARVIS_CORE_WS_URL=ws://IP_DO_PC:8000/agents/ws`
+- `JARVIS_API_TOKEN=change-me`
+- `JARVIS_DEVICE_ID=pc-escritorio`
+- `JARVIS_DEVICE_NAME=PC Escritorio`
+
+## Agente Raspberry Pi
+
+```powershell
+cd C:\Work\jarvis_project\jarvis_agent_pi
+pip install -r requirements.txt
+uvicorn agent:app --host 0.0.0.0 --port 5002
+```
+
+Variaveis uteis:
+
+- `JARVIS_CORE_WS_URL=ws://IP_DO_PC:8000/agents/ws`
+- `JARVIS_API_TOKEN=change-me`
+- `JARVIS_DEVICE_ID=pi-sala`
+- `JARVIS_DEVICE_NAME=Raspberry Pi Sala`
+
 Health check:
 
 ```text
@@ -76,6 +100,7 @@ Notas:
 - `127.0.0.1` so funciona se a app estiver na mesma maquina do servico.
 - Em telemovel real, usa o IP do PC na rede local.
 - Se ativares auth no backend, o token do Flutter tem de coincidir com `JARVIS_API_TOKEN` do backend.
+- Os agentes ligados ao core aparecem agora na seccao de dispositivos das configuracoes da app.
 
 ## Testes
 

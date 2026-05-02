@@ -8,15 +8,12 @@ Responsabilidade:
 Nao contem logica de NLP.
 """
 
-import sqlite3
-
-from config import DB_FILE
+from db_utils import connect
+from settings_store import SETTINGS_DEFAULTS, load_settings_values, update_settings
 
 
 def _connect():
-    conn = sqlite3.connect(DB_FILE)
-    conn.row_factory = sqlite3.Row
-    return conn
+    return connect()
 
 
 def _next_index(prefix):
@@ -60,6 +57,8 @@ def _memory_label_from_key(key):
         return "Nome do Assistente"
     if key == "wake_word_phrase":
         return "Wake Word"
+    if key == "home_assistant_enabled":
+        return "Home Assistant Ativo"
     if key == "home_assistant_url":
         return "URL Home Assistant"
     if key == "home_assistant_token":
@@ -215,6 +214,7 @@ def load_facts():
         else:
             facts[key] = value
 
+    facts.update(load_settings_values())
     facts["preferences"] = preferences
     facts["reminders"] = reminders
 
@@ -231,7 +231,24 @@ def list_memory_entries():
     rows = c.fetchall()
     conn.close()
 
-    entries = [_normalize_entry(row) for row in rows]
+    entries = [
+        _normalize_entry(row)
+        for row in rows
+        if row["key"] not in SETTINGS_DEFAULTS
+    ]
+
+    settings_entries = [
+        {
+            "key": key,
+            "value": value,
+            "type": "fact",
+            "label": _memory_label_from_key(key),
+            "index": None,
+        }
+        for key, value in load_settings_values().items()
+        if key in SETTINGS_DEFAULTS
+    ]
+    entries.extend(settings_entries)
 
     type_order = {
         "fact": 0,
@@ -260,6 +277,16 @@ def update_memory_entry(key, value):
     if not clean_value:
         raise ValueError("O valor da memoria nao pode estar vazio.")
 
+    if key in SETTINGS_DEFAULTS:
+        update_settings({key: clean_value})
+        return {
+            "key": key,
+            "value": clean_value,
+            "type": "fact",
+            "label": _memory_label_from_key(key),
+            "index": None,
+        }
+
     conn = _connect()
     c = conn.cursor()
     c.execute(
@@ -282,6 +309,11 @@ def delete_memory_entry(key):
     """
     Remove uma entrada de memoria pelo identificador real.
     """
+    if key in SETTINGS_DEFAULTS:
+        default_value = SETTINGS_DEFAULTS.get(key, "")
+        update_settings({key: default_value})
+        return True
+
     conn = _connect()
     c = conn.cursor()
     c.execute("DELETE FROM user_memory WHERE key = ?", (key,))

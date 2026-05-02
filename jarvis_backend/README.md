@@ -43,12 +43,28 @@ python main.py --mode voice
 - `GET /health`
 - `POST /sessions`
 - `POST /chat`
+- `GET /settings`
+- `PUT /settings`
+- `GET /devices`
+- `PUT /devices/{device_id}`
 - `GET /memory`
 - `POST /transcribe`
 - `POST /voice/turn`
 - `POST /tts`
+- `WS /agents/ws`
 
 Com `JARVIS_API_TOKEN` definido, todas as rotas acima exigem `Authorization: Bearer <token>`, exceto `GET /health`.
+
+## Nova arquitetura de agentes
+
+O backend passou a expor um gateway WebSocket em `WS /agents/ws` para agentes residentes.
+
+Esses agentes:
+
+- registam `device_id`, nome e capacidades;
+- aparecem na API `/devices`;
+- podem receber comandos do core para executar acoes desktop;
+- deixam a app Flutter como consola de configuracao, e nao como coordenadora obrigatoria da wake word.
 
 ## Testes
 

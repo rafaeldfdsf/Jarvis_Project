@@ -42,6 +42,7 @@ uvicorn agent:app --host 0.0.0.0 --port 5001
 ## Notas
 
 - O agente foi desenhado para correr na maquina Windows que controla o desktop.
+- O agente pode agora ligar-se ao backend central por `JARVIS_CORE_WS_URL` e registar-se como dispositivo.
 - A wake word depende de audio local e das dependencias opcionais carregadas em runtime.
 - A acao `screenshot` grava `screenshot.png` localmente e esse ficheiro fica ignorado pelo git.
 - O endpoint `GET /screen/capture` devolve a captura atual do ecra em base64 para o backend poder analisar o que esta visivel.

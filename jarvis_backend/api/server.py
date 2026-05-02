@@ -1,13 +1,17 @@
 import os
 import tempfile
+from typing import Any
 from time import perf_counter
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Request, UploadFile
-from fastapi import FastAPI
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Request, UploadFile, WebSocket
+from fastapi import FastAPI, status
 from openai import OpenAI
 
+from agent_gateway import agent_gateway
 from api.schemas import (
+    AppSettingEntryResponse,
+    AppSettingsUpdateRequest,
     ChatRequest,
     ChatResponse,
     HomeAssistantDeviceAliasUpdateRequest,
@@ -15,6 +19,8 @@ from api.schemas import (
     HomeAssistantStatusResponse,
     MemoryEntryResponse,
     MemoryUpdateRequest,
+    RegisteredDeviceResponse,
+    RegisteredDeviceUpdateRequest,
     RoutinePayload,
     RoutineResponse,
     RoutineRunResponse,
@@ -24,6 +30,7 @@ from api.schemas import (
 from assistant.service import AssistantService
 from audio.tts import synthesize_speech
 from config import OPENAI_TIMEOUT_SECONDS, OPENAI_TRANSCRIPTION_MODEL, settings
+from device_registry import get_device, init_device_registry, list_registered_devices, update_device
 from home_assistant.service import connection_status
 from home_assistant.devices import (
     clear_devices,
@@ -49,6 +56,7 @@ from routines.service import (
     run_routine,
     update_routine,
 )
+from settings_store import clear_settings, init_settings_db, list_settings, update_settings
 
 configure_logging(settings.log_level)
 logger = get_logger(__name__)
@@ -57,6 +65,8 @@ assistant = AssistantService(enable_desktop_tools=False)
 router = APIRouter()
 init_routines_db()
 init_devices_db()
+init_settings_db()
+init_device_registry()
 
 app = FastAPI(
     title='Assistente Codex API',
@@ -75,6 +85,18 @@ def require_api_token(authorization: str | None = Header(default=None)) -> None:
             status_code=401,
             detail='Token Bearer em falta ou invalido.',
             headers={'WWW-Authenticate': 'Bearer'},
+        )
+
+
+def require_agent_token(websocket: WebSocket) -> None:
+    if not settings.api_auth_enabled:
+        return
+
+    token = (websocket.query_params.get('token') or '').strip()
+    if token != settings.api_token:
+        raise HTTPException(
+            status_code=status.HTTP_1008_POLICY_VIOLATION,
+            detail='Token do agente invalido.',
         )
 
 
@@ -123,6 +145,58 @@ def healthcheck():
     }
 
 
+async def _dispatch_client_action_to_agent(
+    response: dict[str, Any],
+) -> dict[str, Any]:
+    client_action = response.get('client_action')
+    if not isinstance(client_action, dict):
+        return response
+
+    action_type = (client_action.get('type') or '').strip()
+    action_name = ''
+    arguments: dict[str, Any] = {}
+
+    if action_type == 'pc_action':
+        action_name = (client_action.get('action') or '').strip()
+        raw_arguments = client_action.get('arguments')
+        if isinstance(raw_arguments, dict):
+            arguments = raw_arguments
+    elif action_type == 'open_app':
+        action_name = 'open_app'
+        app_name = (client_action.get('app_name') or '').strip()
+        if app_name:
+            arguments['app_name'] = app_name
+    elif action_type == 'open_url':
+        action_name = 'open_url'
+        url = (client_action.get('url') or '').strip()
+        if url:
+            arguments['url'] = url
+
+    if not action_name:
+        return response
+
+    target_device_id = None
+    raw_target = client_action.get('target_device_id')
+    if isinstance(raw_target, str) and raw_target.strip():
+        target_device_id = raw_target.strip()
+
+    dispatch_result = await agent_gateway.dispatch_action(
+        action_name,
+        arguments=arguments,
+        target_device_id=target_device_id,
+    )
+    if not dispatch_result.get('ok'):
+        return response
+
+    response['client_action'] = None
+    response['tool_result'] = {
+        'tool_name': action_name,
+        'ok': True,
+        'data': dispatch_result,
+    }
+    return response
+
+
 @app.post('/sessions', response_model=SessionResponse, dependencies=[Depends(require_api_token)])
 def create_session():
     return assistant.create_session()
@@ -137,9 +211,10 @@ def delete_session(session_id: str):
 
 
 @app.post('/chat', response_model=ChatResponse, dependencies=[Depends(require_api_token)])
-def chat(payload: ChatRequest):
+async def chat(payload: ChatRequest):
     try:
-        return assistant.chat(payload.session_id, payload.message)
+        response = assistant.chat(payload.session_id, payload.message)
+        return await _dispatch_client_action_to_agent(response)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
@@ -178,6 +253,64 @@ def remove_all_memory():
 
 
 @app.get(
+    '/settings',
+    response_model=list[AppSettingEntryResponse],
+    dependencies=[Depends(require_api_token)],
+)
+def get_app_settings():
+    return list_settings()
+
+
+@app.put(
+    '/settings',
+    response_model=list[AppSettingEntryResponse],
+    dependencies=[Depends(require_api_token)],
+)
+def put_app_settings(payload: AppSettingsUpdateRequest):
+    return update_settings(payload.model_dump())
+
+
+@app.delete('/settings', dependencies=[Depends(require_api_token)])
+def remove_app_settings():
+    deleted_count = clear_settings()
+    return {'deleted': True, 'count': deleted_count}
+
+
+@app.get(
+    '/devices',
+    response_model=list[RegisteredDeviceResponse],
+    dependencies=[Depends(require_api_token)],
+)
+def get_registered_devices():
+    return list_registered_devices()
+
+
+@app.get(
+    '/devices/{device_id}',
+    response_model=RegisteredDeviceResponse,
+    dependencies=[Depends(require_api_token)],
+)
+def get_registered_device(device_id: str):
+    device = get_device(device_id)
+    if device is None:
+        raise HTTPException(status_code=404, detail=f'Dispositivo nao encontrado: {device_id}')
+    return device
+
+
+@app.put(
+    '/devices/{device_id}',
+    response_model=RegisteredDeviceResponse,
+    dependencies=[Depends(require_api_token)],
+)
+def put_registered_device(device_id: str, payload: RegisteredDeviceUpdateRequest):
+    try:
+        updates = payload.model_dump(exclude_none=True)
+        return update_device(device_id, updates)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get(
     '/home-assistant/status',
     response_model=HomeAssistantStatusResponse,
     dependencies=[Depends(require_api_token)],
@@ -192,6 +325,13 @@ def get_home_assistant_status():
     dependencies=[Depends(require_api_token)],
 )
 def sync_home_assistant_devices():
+    status_snapshot = connection_status()
+    if not status_snapshot.get('enabled', True):
+        raise HTTPException(status_code=409, detail=status_snapshot['message'])
+    if not status_snapshot.get('configured', False):
+        raise HTTPException(status_code=400, detail=status_snapshot['message'])
+    if not status_snapshot.get('connected', False):
+        raise HTTPException(status_code=502, detail=status_snapshot['message'])
     return sync_devices()
 
 
@@ -381,6 +521,7 @@ async def voice_turn(
             }
 
         response = assistant.chat(session_id, transcript)
+        response = await _dispatch_client_action_to_agent(response)
         response['transcript'] = transcript
         response['platform'] = platform
         response['locale'] = locale
@@ -415,3 +556,14 @@ async def tts_endpoint(data: dict):
 
 
 app.include_router(router, dependencies=[Depends(require_api_token)])
+
+
+@app.websocket('/agents/ws')
+async def agents_websocket(websocket: WebSocket):
+    if settings.api_auth_enabled:
+        token = (websocket.query_params.get('token') or '').strip()
+        if token != settings.api_token:
+            await websocket.close(code=1008, reason='Token do agente invalido.')
+            return
+
+    await agent_gateway.handle_connection(websocket)

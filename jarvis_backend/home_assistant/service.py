@@ -11,7 +11,19 @@ from home_assistant.devices import resolve_device_reference
 from memory.user_memory import load_facts
 
 
+def _is_enabled() -> bool:
+    facts = load_facts()
+    raw = str(facts.get("home_assistant_enabled") or "").strip().lower()
+    if raw:
+        return raw in {"1", "true", "yes", "on"}
+    url = str(facts.get("home_assistant_url") or "").strip()
+    token = str(facts.get("home_assistant_token") or "").strip()
+    return bool(url and token)
+
+
 def _base_url() -> str:
+    if not _is_enabled():
+        raise ValueError("Home Assistant desativado nas configuracoes.")
     facts = load_facts()
     url = (facts.get("home_assistant_url") or "").strip().rstrip("/")
     if not url:
@@ -20,6 +32,8 @@ def _base_url() -> str:
 
 
 def _token() -> str:
+    if not _is_enabled():
+        raise ValueError("Home Assistant desativado nas configuracoes.")
     facts = load_facts()
     token = (facts.get("home_assistant_token") or "").strip()
     if not token:
@@ -50,11 +64,22 @@ def _request(method: str, path: str, *, json_payload: Any | None = None) -> Any:
 
 def connection_status() -> dict[str, Any]:
     facts = load_facts()
+    enabled = _is_enabled()
     url = (facts.get("home_assistant_url") or "").strip().rstrip("/")
     token = (facts.get("home_assistant_token") or "").strip()
 
+    if not enabled:
+        return {
+            "enabled": False,
+            "configured": bool(url and token),
+            "connected": False,
+            "url": url,
+            "message": "Home Assistant desativado nas configuracoes.",
+        }
+
     if not url or not token:
         return {
+            "enabled": True,
             "configured": False,
             "connected": False,
             "url": url,
@@ -65,6 +90,7 @@ def connection_status() -> dict[str, Any]:
         config = _request("GET", "/api/config")
         states = _request("GET", "/api/states")
         return {
+            "enabled": True,
             "configured": True,
             "connected": True,
             "url": url,
@@ -74,6 +100,7 @@ def connection_status() -> dict[str, Any]:
         }
     except Exception as exc:
         return {
+            "enabled": True,
             "configured": True,
             "connected": False,
             "url": url,

@@ -103,6 +103,7 @@ class Routine {
 
 class HomeAssistantStatus {
   const HomeAssistantStatus({
+    required this.enabled,
     required this.configured,
     required this.connected,
     required this.url,
@@ -111,6 +112,7 @@ class HomeAssistantStatus {
     required this.message,
   });
 
+  final bool enabled;
   final bool configured;
   final bool connected;
   final String url;
@@ -120,6 +122,7 @@ class HomeAssistantStatus {
 
   factory HomeAssistantStatus.fromJson(Map<String, dynamic> json) {
     return HomeAssistantStatus(
+      enabled: json['enabled'] != false,
       configured: json['configured'] == true,
       connected: json['connected'] == true,
       url: json['url']?.toString() ?? '',

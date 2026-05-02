@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
+import '../models/app_setting_entry.dart';
 import '../models/memory_entry.dart';
 import '../models/routine.dart';
 import 'api_service.dart';
@@ -32,8 +33,11 @@ class AppSettingsService extends ChangeNotifier {
   String _assistantName = defaultAssistantName;
   String _userName = '';
   String _wakeWordPhrase = defaultAssistantName;
+  bool _homeAssistantEnabled = false;
   String _homeAssistantUrl = '';
   String _homeAssistantToken = '';
+  String _microphoneDeviceId = '';
+  String _microphoneDeviceLabel = '';
   Set<String> _knownKeys = <String>{};
 
   bool get loading => _loading;
@@ -48,8 +52,11 @@ class AppSettingsService extends ChangeNotifier {
   }
 
   String get userName => _userName.trim();
+  bool get homeAssistantEnabled => _homeAssistantEnabled;
   String get homeAssistantUrl => _homeAssistantUrl.trim();
   String get homeAssistantToken => _homeAssistantToken.trim();
+  String get microphoneDeviceId => _microphoneDeviceId.trim();
+  String get microphoneDeviceLabel => _microphoneDeviceLabel.trim();
 
   String get wakeWordPhrase {
     final clean = _wakeWordPhrase.trim();
@@ -87,14 +94,21 @@ class AppSettingsService extends ChangeNotifier {
       final hasLocalSettings = await _loadLocalSettings();
 
       try {
-        final entries = await _api.fetchMemoryEntries();
-        _applyEntries(entries, preserveExistingValues: hasLocalSettings);
+        final entries = await _api.fetchAppSettings();
+        _applySettingsEntries(entries, preserveExistingValues: hasLocalSettings);
         await _persistLocalSettings();
       } catch (error) {
-        if (hasLocalSettings) {
+        try {
+          final entries = await _api.fetchMemoryEntries();
+          _applyEntries(entries, preserveExistingValues: hasLocalSettings);
+          await _persistLocalSettings();
           _warning = _normalizeError(error);
-        } else {
-          _error = _normalizeError(error);
+        } catch (_) {
+          if (hasLocalSettings) {
+            _warning = _normalizeError(error);
+          } else {
+            _error = _normalizeError(error);
+          }
         }
       }
 
@@ -109,8 +123,11 @@ class AppSettingsService extends ChangeNotifier {
     required String assistantName,
     required String userName,
     required String wakeWordPhrase,
+    required bool homeAssistantEnabled,
     required String homeAssistantUrl,
     required String homeAssistantToken,
+    String? microphoneDeviceId,
+    String? microphoneDeviceLabel,
   }) async {
     final cleanAssistantName = assistantName.trim().isEmpty
         ? defaultAssistantName
@@ -119,8 +136,13 @@ class AppSettingsService extends ChangeNotifier {
     final cleanWakeWordPhrase = wakeWordPhrase.trim().isEmpty
         ? cleanAssistantName
         : wakeWordPhrase.trim();
+    final cleanHomeAssistantEnabled = homeAssistantEnabled;
     final cleanHomeAssistantUrl = homeAssistantUrl.trim();
     final cleanHomeAssistantToken = homeAssistantToken.trim();
+    final cleanMicrophoneDeviceId =
+        (microphoneDeviceId ?? _microphoneDeviceId).trim();
+    final cleanMicrophoneDeviceLabel =
+        (microphoneDeviceLabel ?? _microphoneDeviceLabel).trim();
 
     _saving = true;
     _error = null;
@@ -131,20 +153,40 @@ class AppSettingsService extends ChangeNotifier {
       _assistantName = cleanAssistantName;
       _userName = cleanUserName;
       _wakeWordPhrase = cleanWakeWordPhrase;
+      _homeAssistantEnabled = cleanHomeAssistantEnabled;
       _homeAssistantUrl = cleanHomeAssistantUrl;
       _homeAssistantToken = cleanHomeAssistantToken;
+      _microphoneDeviceId = cleanMicrophoneDeviceId;
+      _microphoneDeviceLabel = cleanMicrophoneDeviceLabel;
       _loadedOnce = true;
       await _persistLocalSettings();
 
       try {
-        await _saveField('assistant_name', cleanAssistantName);
-        await _saveField('name', cleanUserName);
-        await _saveField('wake_word_phrase', cleanWakeWordPhrase);
-        await _saveField('home_assistant_url', cleanHomeAssistantUrl);
-        await _saveField('home_assistant_token', cleanHomeAssistantToken);
+        await _api.updateAppSettings(
+          assistantName: cleanAssistantName,
+          userName: cleanUserName,
+          wakeWordPhrase: cleanWakeWordPhrase,
+          homeAssistantEnabled: cleanHomeAssistantEnabled,
+          homeAssistantUrl: cleanHomeAssistantUrl,
+          homeAssistantToken: cleanHomeAssistantToken,
+        );
         await MemoryService().refresh();
       } catch (error) {
-        _warning = _normalizeError(error);
+        try {
+          await _saveField('assistant_name', cleanAssistantName);
+          await _saveField('name', cleanUserName);
+          await _saveField('wake_word_phrase', cleanWakeWordPhrase);
+          await _saveField(
+            'home_assistant_enabled',
+            cleanHomeAssistantEnabled ? 'true' : 'false',
+          );
+          await _saveField('home_assistant_url', cleanHomeAssistantUrl);
+          await _saveField('home_assistant_token', cleanHomeAssistantToken);
+          await MemoryService().refresh();
+          _warning = _normalizeError(error);
+        } catch (_) {
+          _warning = _normalizeError(error);
+        }
       }
 
       notifyListeners();
@@ -169,13 +211,17 @@ class AppSettingsService extends ChangeNotifier {
       _assistantName = defaultAssistantName;
       _userName = '';
       _wakeWordPhrase = defaultAssistantName;
+      _homeAssistantEnabled = false;
       _homeAssistantUrl = '';
       _homeAssistantToken = '';
+      _microphoneDeviceId = '';
+      _microphoneDeviceLabel = '';
       _knownKeys = <String>{};
       _loadedOnce = true;
       await _persistLocalSettings();
 
       try {
+        await _api.clearAppSettings();
         await _api.clearMemory();
         await MemoryService().refresh();
       } catch (error) {
@@ -203,6 +249,7 @@ class AppSettingsService extends ChangeNotifier {
     final assistantName = _entryValue(entries, 'assistant_name');
     final userName = _entryValue(entries, 'name');
     final wakeWordPhrase = _entryValue(entries, 'wake_word_phrase');
+    final homeAssistantEnabled = _entryValue(entries, 'home_assistant_enabled');
     final homeAssistantUrl = _entryValue(entries, 'home_assistant_url');
     final homeAssistantToken = _entryValue(entries, 'home_assistant_token');
 
@@ -221,6 +268,65 @@ class AppSettingsService extends ChangeNotifier {
         : preserveExistingValues
             ? wakeWordOrDefault()
             : _assistantName;
+    _homeAssistantEnabled = homeAssistantEnabled != null
+        ? _parseBool(homeAssistantEnabled)
+        : preserveExistingValues
+            ? _homeAssistantEnabled
+            : (homeAssistantUrl?.trim().isNotEmpty == true &&
+                homeAssistantToken?.trim().isNotEmpty == true);
+    _homeAssistantUrl = homeAssistantUrl?.trim().isNotEmpty == true
+        ? homeAssistantUrl!.trim()
+        : preserveExistingValues
+            ? _homeAssistantUrl
+            : '';
+    _homeAssistantToken = homeAssistantToken?.trim().isNotEmpty == true
+        ? homeAssistantToken!.trim()
+        : preserveExistingValues
+            ? _homeAssistantToken
+            : '';
+  }
+
+  void _applySettingsEntries(
+    List<AppSettingEntry> entries, {
+    bool preserveExistingValues = false,
+  }) {
+    final values = <String, String>{};
+    for (final entry in entries) {
+      final key = entry.key.trim();
+      final value = entry.value;
+      if (key.isNotEmpty) {
+        values[key] = value;
+      }
+    }
+
+    final assistantName = values['assistant_name'];
+    final userName = values['user_name'];
+    final wakeWordPhrase = values['wake_word_phrase'];
+    final homeAssistantEnabled = values['home_assistant_enabled'];
+    final homeAssistantUrl = values['home_assistant_url'];
+    final homeAssistantToken = values['home_assistant_token'];
+
+    _assistantName = assistantName?.trim().isNotEmpty == true
+        ? assistantName!.trim()
+        : preserveExistingValues
+            ? assistantNameOrDefault()
+            : defaultAssistantName;
+    _userName = userName?.trim().isNotEmpty == true
+        ? userName!.trim()
+        : preserveExistingValues
+            ? _userName
+            : '';
+    _wakeWordPhrase = wakeWordPhrase?.trim().isNotEmpty == true
+        ? wakeWordPhrase!.trim()
+        : preserveExistingValues
+            ? wakeWordOrDefault()
+            : _assistantName;
+    _homeAssistantEnabled = homeAssistantEnabled != null
+        ? _parseBool(homeAssistantEnabled)
+        : preserveExistingValues
+            ? _homeAssistantEnabled
+            : (homeAssistantUrl?.trim().isNotEmpty == true &&
+                homeAssistantToken?.trim().isNotEmpty == true);
     _homeAssistantUrl = homeAssistantUrl?.trim().isNotEmpty == true
         ? homeAssistantUrl!.trim()
         : preserveExistingValues
@@ -296,6 +402,11 @@ class AppSettingsService extends ChangeNotifier {
           : _assistantName;
       _homeAssistantUrl = data['home_assistant_url']?.toString().trim() ?? '';
       _homeAssistantToken = data['home_assistant_token']?.toString().trim() ?? '';
+      _homeAssistantEnabled = data.containsKey('home_assistant_enabled')
+          ? _parseBool(data['home_assistant_enabled'])
+          : (_homeAssistantUrl.isNotEmpty && _homeAssistantToken.isNotEmpty);
+      _microphoneDeviceId = data['microphone_device_id']?.toString().trim() ?? '';
+      _microphoneDeviceLabel = data['microphone_device_label']?.toString().trim() ?? '';
 
       return true;
     } catch (_) {
@@ -311,8 +422,11 @@ class AppSettingsService extends ChangeNotifier {
         'assistant_name': assistantName,
         'user_name': userName,
         'wake_word_phrase': wakeWordPhrase,
+        'home_assistant_enabled': homeAssistantEnabled,
         'home_assistant_url': homeAssistantUrl,
         'home_assistant_token': homeAssistantToken,
+        'microphone_device_id': microphoneDeviceId,
+        'microphone_device_label': microphoneDeviceLabel,
       }),
       flush: true,
     );
@@ -333,5 +447,10 @@ class AppSettingsService extends ChangeNotifier {
       return text.substring('Exception: '.length);
     }
     return text;
+  }
+
+  bool _parseBool(Object? value) {
+    final raw = value?.toString().trim().toLowerCase() ?? '';
+    return raw == 'true' || raw == '1' || raw == 'yes' || raw == 'on';
   }
 }

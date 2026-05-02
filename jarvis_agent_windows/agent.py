@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import base64
 import io
+import json
 import os
 import queue
 import re
 import subprocess
 import threading
+import time
 import unicodedata
 import urllib.parse
 import webbrowser
@@ -70,6 +72,27 @@ _WAKE_WORD_RUNTIME: dict[str, Any] | None = None
 _WAKE_WORD_RUNTIME_ERROR: str | None = None
 _CURRENT_WAKE_WORD_PHRASE = DEFAULT_WAKE_WORD_PHRASE
 
+AGENT_DEVICE_ID = (os.getenv('JARVIS_DEVICE_ID') or os.getenv('COMPUTERNAME') or 'pc-windows-01').strip()
+AGENT_DEVICE_NAME = (os.getenv('JARVIS_DEVICE_NAME') or os.getenv('COMPUTERNAME') or AGENT_DEVICE_ID).strip()
+AGENT_DEVICE_TYPE = (os.getenv('JARVIS_DEVICE_TYPE') or 'windows').strip()
+AGENT_PLATFORM = (os.getenv('JARVIS_DEVICE_PLATFORM') or 'windows').strip()
+AGENT_LOCATION = (os.getenv('JARVIS_DEVICE_LOCATION') or '').strip()
+CORE_WS_URL = (os.getenv('JARVIS_CORE_WS_URL') or 'ws://127.0.0.1:8000/agents/ws').strip()
+CORE_API_TOKEN = (os.getenv('JARVIS_API_TOKEN') or '').strip()
+AUTO_CONNECT_CORE = (os.getenv('JARVIS_AGENT_AUTO_CONNECT') or 'true').strip().lower() not in {'0', 'false', 'no', 'off'}
+AGENT_CAPABILITIES = [
+    'desktop.control',
+    'screen.capture',
+    'wake_word.local',
+]
+
+_CORE_LOCK = threading.Lock()
+_CORE_STOP = threading.Event()
+_CORE_THREAD: threading.Thread | None = None
+_CORE_CONNECTED = False
+_CORE_LAST_ERROR = ''
+_CORE_LAST_EVENT_AT = ''
+
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -95,9 +118,186 @@ def _publish_event(event_type: str, **payload: Any) -> None:
         except queue.Full:
             pass
 
+    _set_core_last_event()
+
 
 def _is_wake_word_running() -> bool:
     return _WAKE_WORD_THREAD is not None and _WAKE_WORD_THREAD.is_alive()
+
+
+def _set_core_last_event() -> None:
+    global _CORE_LAST_EVENT_AT
+    _CORE_LAST_EVENT_AT = _utc_now_iso()
+
+
+def _set_core_connection_state(connected: bool, *, error: str = '') -> None:
+    global _CORE_CONNECTED, _CORE_LAST_ERROR
+    with _CORE_LOCK:
+        _CORE_CONNECTED = connected
+        _CORE_LAST_ERROR = error.strip()
+        if connected:
+            _set_core_last_event()
+
+
+def _is_core_connected() -> bool:
+    with _CORE_LOCK:
+        return _CORE_CONNECTED
+
+
+def _core_ws_url() -> str:
+    if not CORE_API_TOKEN:
+        return CORE_WS_URL
+
+    separator = '&' if '?' in CORE_WS_URL else '?'
+    return f'{CORE_WS_URL}{separator}token={urllib.parse.quote_plus(CORE_API_TOKEN)}'
+
+
+def _agent_hello_payload() -> dict[str, Any]:
+    return {
+        'type': 'agent.hello',
+        'device_id': AGENT_DEVICE_ID,
+        'device_name': AGENT_DEVICE_NAME,
+        'device_type': AGENT_DEVICE_TYPE,
+        'platform': AGENT_PLATFORM,
+        'location': AGENT_LOCATION,
+        'agent_version': '2.0.0',
+        'capabilities': list(AGENT_CAPABILITIES),
+        'metadata': {
+            'wake_word_engine': WAKE_WORD_ENGINE,
+        },
+    }
+
+
+def _run_core_command(message: dict[str, Any]) -> dict[str, Any] | None:
+    message_type = (message.get('type') or '').strip()
+
+    if message_type == 'core.command.run_action':
+        request_id = (message.get('request_id') or '').strip()
+        action_payload = message.get('action')
+        if not isinstance(action_payload, dict):
+            return {
+                'type': 'agent.result.action_completed',
+                'request_id': request_id,
+                'device_id': AGENT_DEVICE_ID,
+                'ok': False,
+                'error': 'Payload de acao invalido.',
+            }
+
+        action_name = (action_payload.get('name') or '').strip()
+        arguments = action_payload.get('arguments')
+        if not isinstance(arguments, dict):
+            arguments = {}
+
+        result = _run_action({
+            'action': action_name,
+            **arguments,
+        })
+        return {
+            'type': 'agent.result.action_completed',
+            'request_id': request_id,
+            'device_id': AGENT_DEVICE_ID,
+            'ok': result.get('ok') is True,
+            'result': result,
+            'error': result.get('error'),
+        }
+
+    if message_type == 'core.command.start_wake_word':
+        keyword = (message.get('keyword') or '').strip()
+        result = start_wake_word({'keyword': keyword} if keyword else None)
+        return {
+            'type': 'agent.status',
+            'device_id': AGENT_DEVICE_ID,
+            'wake_word_running': result.get('running') is True,
+            'last_error': result.get('error') or '',
+        }
+
+    if message_type == 'core.command.stop_wake_word':
+        stop_wake_word()
+        return {
+            'type': 'agent.status',
+            'device_id': AGENT_DEVICE_ID,
+            'wake_word_running': False,
+            'last_error': '',
+        }
+
+    return None
+
+
+def _load_websocket_connect():
+    from websockets.sync.client import connect
+    return connect
+
+
+def _core_client_loop(stop_event: threading.Event) -> None:
+    connect = _load_websocket_connect()
+    url = _core_ws_url()
+
+    while not stop_event.is_set():
+        try:
+            with connect(url, open_timeout=5, close_timeout=1, ping_interval=20) as websocket:
+                websocket.send(json.dumps(_agent_hello_payload()))
+                ack_raw = websocket.recv(timeout=10)
+                if isinstance(ack_raw, bytes):
+                    ack_raw = ack_raw.decode('utf-8', errors='replace')
+                ack = json.loads(ack_raw)
+                if ack.get('type') != 'core.hello_ack':
+                    raise RuntimeError('Resposta invalida do core durante handshake.')
+
+                _set_core_connection_state(True, error='')
+
+                while not stop_event.is_set():
+                    try:
+                        raw_message = websocket.recv(timeout=1)
+                    except TimeoutError:
+                        websocket.send(
+                            json.dumps(
+                                {
+                                    'type': 'agent.status',
+                                    'device_id': AGENT_DEVICE_ID,
+                                    'wake_word_running': _is_wake_word_running(),
+                                    'last_error': _WAKE_WORD_RUNTIME_ERROR or '',
+                                }
+                            )
+                        )
+                        continue
+
+                    if isinstance(raw_message, bytes):
+                        raw_message = raw_message.decode('utf-8', errors='replace')
+
+                    payload = json.loads(raw_message)
+                    response = _run_core_command(payload)
+                    if response is not None:
+                        websocket.send(json.dumps(response))
+                        _set_core_last_event()
+        except Exception as exc:
+            _set_core_connection_state(False, error=str(exc))
+            time.sleep(2.0)
+
+
+def _ensure_core_connection_thread() -> None:
+    if not AUTO_CONNECT_CORE:
+        return
+
+    with _CORE_LOCK:
+        global _CORE_THREAD
+        if _CORE_THREAD is not None and _CORE_THREAD.is_alive():
+            return
+
+        _CORE_STOP.clear()
+        _CORE_THREAD = threading.Thread(
+            target=_core_client_loop,
+            args=(_CORE_STOP,),
+            name='jarvis-core-client',
+            daemon=True,
+        )
+        _CORE_THREAD.start()
+
+
+def _stop_core_connection_thread() -> None:
+    _CORE_STOP.set()
+    thread = _CORE_THREAD
+    if thread is not None and thread.is_alive():
+        thread.join(timeout=2.0)
 
 
 def _fold_text(value: str) -> str:
@@ -620,6 +820,13 @@ def _run_action(data: dict[str, Any]) -> dict[str, Any]:
 def health() -> dict[str, Any]:
     return {
         'ok': True,
+        'device_id': AGENT_DEVICE_ID,
+        'device_name': AGENT_DEVICE_NAME,
+        'device_type': AGENT_DEVICE_TYPE,
+        'core_connected': _is_core_connected(),
+        'core_last_error': _CORE_LAST_ERROR,
+        'core_last_event_at': _CORE_LAST_EVENT_AT,
+        'capabilities': list(AGENT_CAPABILITIES),
         'wake_word_running': _is_wake_word_running(),
         'wake_word_engine': WAKE_WORD_ENGINE,
         'wake_word_error': _WAKE_WORD_RUNTIME_ERROR,
@@ -711,3 +918,14 @@ def run_action(data: dict[str, Any]) -> dict[str, Any]:
         return _run_action(data)
     except Exception as exc:
         return {'ok': False, 'error': str(exc)}
+
+
+@app.on_event('startup')
+def _startup() -> None:
+    _ensure_core_connection_thread()
+
+
+@app.on_event('shutdown')
+def _shutdown() -> None:
+    _stop_core_connection_thread()
+    _WAKE_WORD_STOP.set()
