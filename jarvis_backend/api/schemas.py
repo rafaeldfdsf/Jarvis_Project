@@ -38,3 +38,64 @@ class MemoryEntryResponse(BaseModel):
 
 class MemoryUpdateRequest(BaseModel):
     value: str
+
+
+class HomeAssistantStatusResponse(BaseModel):
+    configured: bool
+    connected: bool
+    url: str = ''
+    location_name: Optional[str] = None
+    entity_count: int = 0
+    message: str
+
+
+class HomeAssistantDeviceResponse(BaseModel):
+    entity_id: str
+    domain: str
+    friendly_name: str
+    alias: str = ''
+    state: str = ''
+    attributes: Dict[str, Any] = {}
+    last_seen_at: str
+    updated_at: str
+
+
+class HomeAssistantDeviceAliasUpdateRequest(BaseModel):
+    alias: str = ''
+
+
+class RoutineActionPayload(BaseModel):
+    type: str
+    label: Optional[str] = None
+    domain: Optional[str] = None
+    service: Optional[str] = None
+    entity_id: Optional[str] = None
+    target: Optional[str] = None
+    message: Optional[str] = None
+    text: Optional[str] = None
+    service_data: Optional[Dict[str, Any]] = None
+
+
+class RoutinePayload(BaseModel):
+    name: str
+    description: str = ''
+    trigger_text: str = ''
+    actions: list[RoutineActionPayload] = []
+    enabled: bool = True
+
+
+class RoutineResponse(BaseModel):
+    id: str
+    name: str
+    description: str = ''
+    trigger_text: str = ''
+    actions: list[Dict[str, Any]] = []
+    enabled: bool
+    created_at: str
+    updated_at: str
+
+
+class RoutineRunResponse(BaseModel):
+    routine_id: str
+    routine_name: str
+    results: list[Dict[str, Any]]

@@ -10,14 +10,29 @@ from openai import OpenAI
 from api.schemas import (
     ChatRequest,
     ChatResponse,
+    HomeAssistantDeviceAliasUpdateRequest,
+    HomeAssistantDeviceResponse,
+    HomeAssistantStatusResponse,
     MemoryEntryResponse,
     MemoryUpdateRequest,
+    RoutinePayload,
+    RoutineResponse,
+    RoutineRunResponse,
     SessionResponse,
     VoiceTurnResponse,
 )
 from assistant.service import AssistantService
 from audio.tts import synthesize_speech
 from config import OPENAI_TIMEOUT_SECONDS, OPENAI_TRANSCRIPTION_MODEL, settings
+from home_assistant.service import connection_status
+from home_assistant.devices import (
+    clear_devices,
+    delete_device,
+    init_devices_db,
+    list_devices,
+    sync_devices,
+    update_device_alias,
+)
 from llm.ollama import LLMUnavailableError
 from logging_utils import configure_logging, get_logger, log_event
 from memory.user_memory import (
@@ -26,12 +41,22 @@ from memory.user_memory import (
     list_memory_entries,
     update_memory_entry,
 )
+from routines.service import (
+    create_routine,
+    delete_routine,
+    init_routines_db,
+    list_routines,
+    run_routine,
+    update_routine,
+)
 
 configure_logging(settings.log_level)
 logger = get_logger(__name__)
 client = OpenAI(timeout=OPENAI_TIMEOUT_SECONDS)
 assistant = AssistantService(enable_desktop_tools=False)
 router = APIRouter()
+init_routines_db()
+init_devices_db()
 
 app = FastAPI(
     title='Assistente Codex API',
@@ -150,6 +175,138 @@ def remove_memory_entry(memory_key: str):
 def remove_all_memory():
     deleted_count = clear_memory()
     return {'deleted': True, 'count': deleted_count}
+
+
+@app.get(
+    '/home-assistant/status',
+    response_model=HomeAssistantStatusResponse,
+    dependencies=[Depends(require_api_token)],
+)
+def get_home_assistant_status():
+    return connection_status()
+
+
+@app.post(
+    '/home-assistant/devices/sync',
+    response_model=list[HomeAssistantDeviceResponse],
+    dependencies=[Depends(require_api_token)],
+)
+def sync_home_assistant_devices():
+    return sync_devices()
+
+
+@app.get(
+    '/home-assistant/devices',
+    response_model=list[HomeAssistantDeviceResponse],
+    dependencies=[Depends(require_api_token)],
+)
+def get_home_assistant_devices():
+    return list_devices()
+
+
+@app.put(
+    '/home-assistant/devices/{entity_id}/alias',
+    response_model=HomeAssistantDeviceResponse,
+    dependencies=[Depends(require_api_token)],
+)
+def put_home_assistant_device_alias(
+    entity_id: str,
+    payload: HomeAssistantDeviceAliasUpdateRequest,
+):
+    try:
+        return update_device_alias(entity_id, payload.alias)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.delete(
+    '/home-assistant/devices/{entity_id}',
+    dependencies=[Depends(require_api_token)],
+)
+def remove_home_assistant_device(entity_id: str):
+    deleted = delete_device(entity_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail=f'Dispositivo nao encontrado: {entity_id}')
+    return {'deleted': True}
+
+
+@app.delete(
+    '/home-assistant/devices',
+    dependencies=[Depends(require_api_token)],
+)
+def remove_all_home_assistant_devices():
+    deleted_count = clear_devices()
+    return {'deleted': True, 'count': deleted_count}
+
+
+@app.get(
+    '/routines',
+    response_model=list[RoutineResponse],
+    dependencies=[Depends(require_api_token)],
+)
+def get_routines():
+    return list_routines()
+
+
+@app.post(
+    '/routines',
+    response_model=RoutineResponse,
+    dependencies=[Depends(require_api_token)],
+)
+def post_routine(payload: RoutinePayload):
+    try:
+        return create_routine(
+            name=payload.name,
+            description=payload.description,
+            trigger_text=payload.trigger_text,
+            actions=[action.model_dump(exclude_none=True) for action in payload.actions],
+            enabled=payload.enabled,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.put(
+    '/routines/{routine_id}',
+    response_model=RoutineResponse,
+    dependencies=[Depends(require_api_token)],
+)
+def put_routine(routine_id: str, payload: RoutinePayload):
+    try:
+        return update_routine(
+            routine_id,
+            name=payload.name,
+            description=payload.description,
+            trigger_text=payload.trigger_text,
+            actions=[action.model_dump(exclude_none=True) for action in payload.actions],
+            enabled=payload.enabled,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.delete('/routines/{routine_id}', dependencies=[Depends(require_api_token)])
+def remove_routine(routine_id: str):
+    deleted = delete_routine(routine_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail=f'Rotina nao encontrada: {routine_id}')
+    return {'deleted': True}
+
+
+@app.post(
+    '/routines/{routine_id}/run',
+    response_model=RoutineRunResponse,
+    dependencies=[Depends(require_api_token)],
+)
+def run_routine_endpoint(routine_id: str):
+    try:
+        return run_routine(routine_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 def _transcribe_file(audio_path: str) -> str:

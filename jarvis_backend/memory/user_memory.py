@@ -60,6 +60,10 @@ def _memory_label_from_key(key):
         return "Nome do Assistente"
     if key == "wake_word_phrase":
         return "Wake Word"
+    if key == "home_assistant_url":
+        return "URL Home Assistant"
+    if key == "home_assistant_token":
+        return "Token Home Assistant"
 
     entry_type = _memory_type_from_key(key)
     index = _memory_index_from_key(key)

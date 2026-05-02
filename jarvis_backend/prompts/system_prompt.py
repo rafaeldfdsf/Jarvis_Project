@@ -11,6 +11,7 @@ Apenas constroi texto.
 
 import json
 
+from home_assistant.devices import device_alias_map
 from memory.user_memory import load_facts
 from tools.registry import TOOLS
 
@@ -27,6 +28,10 @@ BASE_SYSTEM_PROMPT = (
     "premir atalhos, escrever texto, mudar de janela ou pesquisar um video ou musica no YouTube.\n"
     "Usa analyze_screen quando o utilizador perguntar sobre o que esta visivel no ecra, numa janela, "
     "numa screenshot ou no conteudo atual do computador.\n"
+    "Se o Home Assistant estiver configurado, usa list_home_assistant_entities para descobrir entidades "
+    "e call_home_assistant_service para controlar a casa.\n"
+    "Se o utilizador pedir para gerir rotinas, usa as tools list_routines, create_routine, update_routine, "
+    "delete_routine e run_routine.\n"
     "Exemplos importantes: para abrir uma musica no YouTube usa control_computer com action youtube_search e query.\n"
     "Para fechar so a aba atual do browser usa control_computer com action close_tab.\n"
     "Quando precisares de informacao atual, internet, previsao do tempo, "
@@ -38,6 +43,7 @@ BASE_SYSTEM_PROMPT = (
     '"tool_name":"NOME_DA_TOOL",'
     '"arguments":{...}'
     "}\n"
+    "Nao uses formatos alternativos como {\"type\":\"call_home_assistant_service\", ...}.\n"
     "Se nao precisares de tool, responde normalmente em texto.\n"
     "Nunca inventes resultados de tools.\n"
     "Personalidade:\n"
@@ -60,10 +66,25 @@ def build_system_prompt(available_tools=None):
     facts = load_facts()
     assistant_name = (facts.get("assistant_name") or "Jarvis").strip() or "Jarvis"
     wake_word_phrase = (facts.get("wake_word_phrase") or assistant_name).strip() or assistant_name
+    home_assistant_url = (facts.get("home_assistant_url") or "").strip()
+    home_assistant_token = (facts.get("home_assistant_token") or "").strip()
 
     prompt = f"O teu nome de assistente e {assistant_name}.\n"
     prompt += f"Se te perguntarem pelo teu nome, assumes sempre {assistant_name}.\n"
     prompt += f"A palavra de ativacao configurada e {wake_word_phrase}.\n"
+    if home_assistant_url and home_assistant_token:
+        prompt += (
+            f"O Home Assistant esta configurado em {home_assistant_url}. "
+            "Podes controlar dispositivos da casa usando as tools dedicadas.\n"
+        )
+        alias_map = device_alias_map()
+        if alias_map:
+            prompt += "Dispositivos conhecidos e aliases configurados:\n"
+            for entity_id, data in alias_map.items():
+                prompt += (
+                    f"- {entity_id}: nome original '{data['friendly_name']}', "
+                    f"alias '{data['alias']}', dominio '{data['domain']}'.\n"
+                )
     prompt += BASE_SYSTEM_PROMPT
 
     if "name" in facts:
