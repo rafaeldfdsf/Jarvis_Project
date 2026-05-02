@@ -84,6 +84,12 @@ class MicrophoneTestResult {
 class VoiceService {
   final VadHandler _vadHandler = VadHandler.create(isDebug: false);
 
+  static const double _positiveSpeechThreshold = 0.58;
+  static const double _negativeSpeechThreshold = 0.32;
+  static const int _redemptionFrames = 10;
+  static const int _minSpeechFrames = 2;
+  static const Duration _manualFinishFallback = Duration(milliseconds: 450);
+
   Completer<VoiceCaptureResult?>? _captureCompleter;
   StreamSubscription<dynamic>? _speechStartSubscription;
   StreamSubscription<dynamic>? _realSpeechStartSubscription;
@@ -127,11 +133,11 @@ class VoiceService {
     try {
       final inputDevice = await _resolveInputDevice(inputDeviceId);
       await _vadHandler.startListening(
-        positiveSpeechThreshold: 0.60,
-        negativeSpeechThreshold: 0.35,
+        positiveSpeechThreshold: _positiveSpeechThreshold,
+        negativeSpeechThreshold: _negativeSpeechThreshold,
         preSpeechPadFrames: 2,
-        redemptionFrames: 16,
-        minSpeechFrames: 2,
+        redemptionFrames: _redemptionFrames,
+        minSpeechFrames: _minSpeechFrames,
         submitUserSpeechOnPause: true,
         recordConfig: RecordConfig(
           encoder: AudioEncoder.pcm16bits,
@@ -175,7 +181,7 @@ class VoiceService {
     try {
       await _vadHandler.pauseListening();
       _finishFallbackTimer?.cancel();
-      _finishFallbackTimer = Timer(const Duration(milliseconds: 1200), () {
+      _finishFallbackTimer = Timer(_manualFinishFallback, () {
         final pending = _captureCompleter;
         if (pending != null && !pending.isCompleted) {
           pending.complete(null);

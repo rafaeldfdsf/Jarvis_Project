@@ -12,6 +12,7 @@ import 'memory_service.dart';
 
 class AppSettingsService extends ChangeNotifier {
   static const String defaultAssistantName = 'Jarvis';
+  static const String defaultTtsMode = 'local';
 
   static final AppSettingsService _instance = AppSettingsService._internal();
 
@@ -39,6 +40,9 @@ class AppSettingsService extends ChangeNotifier {
   String _homeAssistantToken = '';
   String _microphoneDeviceId = '';
   String _microphoneDeviceLabel = '';
+  String _ttsMode = defaultTtsMode;
+  String _ttsVoiceKey = '';
+  String _ttsVoiceLabel = '';
   Set<String> _knownKeys = <String>{};
 
   bool get loading => _loading;
@@ -59,6 +63,9 @@ class AppSettingsService extends ChangeNotifier {
   String get homeAssistantToken => _homeAssistantToken.trim();
   String get microphoneDeviceId => _microphoneDeviceId.trim();
   String get microphoneDeviceLabel => _microphoneDeviceLabel.trim();
+  String get ttsMode => _normalizeTtsMode(_ttsMode);
+  String get ttsVoiceKey => _ttsVoiceKey.trim();
+  String get ttsVoiceLabel => _ttsVoiceLabel.trim();
 
   String get wakeWordPhrase {
     final clean = _wakeWordPhrase.trim();
@@ -131,6 +138,9 @@ class AppSettingsService extends ChangeNotifier {
     required String homeAssistantToken,
     String? microphoneDeviceId,
     String? microphoneDeviceLabel,
+    String? ttsMode,
+    String? ttsVoiceKey,
+    String? ttsVoiceLabel,
   }) async {
     final cleanAssistantName = assistantName.trim().isEmpty
         ? defaultAssistantName
@@ -149,6 +159,9 @@ class AppSettingsService extends ChangeNotifier {
         (microphoneDeviceId ?? _microphoneDeviceId).trim();
     final cleanMicrophoneDeviceLabel =
         (microphoneDeviceLabel ?? _microphoneDeviceLabel).trim();
+    final cleanTtsMode = _normalizeTtsMode(ttsMode ?? _ttsMode);
+    final cleanTtsVoiceKey = (ttsVoiceKey ?? _ttsVoiceKey).trim();
+    final cleanTtsVoiceLabel = (ttsVoiceLabel ?? _ttsVoiceLabel).trim();
 
     _saving = true;
     _error = null;
@@ -165,6 +178,9 @@ class AppSettingsService extends ChangeNotifier {
       _homeAssistantToken = cleanHomeAssistantToken;
       _microphoneDeviceId = cleanMicrophoneDeviceId;
       _microphoneDeviceLabel = cleanMicrophoneDeviceLabel;
+      _ttsMode = cleanTtsMode;
+      _ttsVoiceKey = cleanTtsVoiceKey;
+      _ttsVoiceLabel = cleanTtsVoiceLabel;
       _loadedOnce = true;
       await _persistLocalSettings();
 
@@ -229,6 +245,9 @@ class AppSettingsService extends ChangeNotifier {
       _homeAssistantToken = '';
       _microphoneDeviceId = '';
       _microphoneDeviceLabel = '';
+      _ttsMode = defaultTtsMode;
+      _ttsVoiceKey = '';
+      _ttsVoiceLabel = '';
       _knownKeys = <String>{};
       _loadedOnce = true;
       await _persistLocalSettings();
@@ -435,6 +454,9 @@ class AppSettingsService extends ChangeNotifier {
           : (_homeAssistantUrl.isNotEmpty && _homeAssistantToken.isNotEmpty);
       _microphoneDeviceId = data['microphone_device_id']?.toString().trim() ?? '';
       _microphoneDeviceLabel = data['microphone_device_label']?.toString().trim() ?? '';
+      _ttsMode = _normalizeTtsMode(data['tts_mode']?.toString().trim() ?? '');
+      _ttsVoiceKey = data['tts_voice_key']?.toString().trim() ?? '';
+      _ttsVoiceLabel = data['tts_voice_label']?.toString().trim() ?? '';
 
       return true;
     } catch (_) {
@@ -456,6 +478,9 @@ class AppSettingsService extends ChangeNotifier {
         'home_assistant_token': homeAssistantToken,
         'microphone_device_id': microphoneDeviceId,
         'microphone_device_label': microphoneDeviceLabel,
+        'tts_mode': ttsMode,
+        'tts_voice_key': ttsVoiceKey,
+        'tts_voice_label': ttsVoiceLabel,
       }),
       flush: true,
     );
@@ -491,5 +516,11 @@ class AppSettingsService extends ChangeNotifier {
       return 100;
     }
     return value;
+  }
+
+  String _normalizeTtsMode(String value) {
+    return value.trim().toLowerCase() == 'backend'
+        ? 'backend'
+        : defaultTtsMode;
   }
 }

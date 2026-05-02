@@ -8,6 +8,7 @@ import '../models/routine.dart';
 import '../services/api_service.dart';
 import '../services/app_settings_service.dart';
 import '../services/device_registry_service.dart';
+import '../services/tts_service.dart';
 import '../services/voice_service.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -24,6 +25,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   final AppSettingsService _settings = AppSettingsService();
   final DeviceRegistryService _deviceRegistry = DeviceRegistryService();
   final VoiceService _voiceService = VoiceService();
+  final TtsService _ttsService = TtsService();
   final TextEditingController _assistantNameController =
       TextEditingController();
   final TextEditingController _userNameController = TextEditingController();
@@ -40,9 +42,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
   double _wakeWordSensitivity = 40;
   HomeAssistantStatus? _homeAssistantStatus;
   List<MicrophoneDevice> _microphones = const <MicrophoneDevice>[];
+  List<TtsVoiceOption> _ttsVoices = const <TtsVoiceOption>[];
   String _selectedMicrophoneId = '';
+  String _selectedTtsMode = AppSettingsService.defaultTtsMode;
+  String _selectedTtsVoiceKey = '';
   String? _microphoneStatusMessage;
   bool _microphoneStatusOk = false;
+  bool _loadingTtsVoices = false;
+  bool _testingTtsVoice = false;
+  String? _ttsVoiceStatusMessage;
+  bool _ttsVoiceStatusOk = false;
 
   @override
   void initState() {
@@ -51,6 +60,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     unawaited(_loadSettings());
     unawaited(_deviceRegistry.load());
     unawaited(_loadMicrophones());
+    unawaited(_loadTtsVoices());
   }
 
   Future<void> _loadSettings() async {
@@ -70,6 +80,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _homeAssistantUrlController.text = _settings.homeAssistantUrl;
     _homeAssistantTokenController.text = _settings.homeAssistantToken;
     _selectedMicrophoneId = _settings.microphoneDeviceId;
+    _selectedTtsMode = _settings.ttsMode;
+    _selectedTtsVoiceKey = _settings.ttsVoiceKey;
   }
 
   String get _wakeWordSensitivityLabel {
@@ -122,11 +134,40 @@ class _SettingsScreenState extends State<SettingsScreen> {
     });
   }
 
+  Future<void> _loadTtsVoices() async {
+    setState(() {
+      _loadingTtsVoices = true;
+    });
+
+    final voices = await _ttsService.listAvailableVoices();
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _ttsVoices = voices;
+      _loadingTtsVoices = false;
+      final selectedExists = voices.any(
+        (voice) => voice.key == _selectedTtsVoiceKey,
+      );
+      if (!selectedExists) {
+        _selectedTtsVoiceKey = '';
+      }
+    });
+  }
+
   Future<void> _saveSettings() async {
     MicrophoneDevice? selectedMicrophone;
+    TtsVoiceOption? selectedVoice;
     for (final device in _microphones) {
       if (device.id == _selectedMicrophoneId) {
         selectedMicrophone = device;
+        break;
+      }
+    }
+    for (final voice in _ttsVoices) {
+      if (voice.key == _selectedTtsVoiceKey) {
+        selectedVoice = voice;
         break;
       }
     }
@@ -140,6 +181,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
       homeAssistantToken: _homeAssistantTokenController.text,
       microphoneDeviceId: _selectedMicrophoneId,
       microphoneDeviceLabel: selectedMicrophone?.displayLabel ?? '',
+      ttsMode: _selectedTtsMode,
+      ttsVoiceKey: _selectedTtsVoiceKey,
+      ttsVoiceLabel: selectedVoice?.label ?? '',
     );
 
     if (!mounted) {
@@ -167,9 +211,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _testHomeAssistant() async {
     MicrophoneDevice? selectedMicrophone;
+    TtsVoiceOption? selectedVoice;
     for (final device in _microphones) {
       if (device.id == _selectedMicrophoneId) {
         selectedMicrophone = device;
+        break;
+      }
+    }
+    for (final voice in _ttsVoices) {
+      if (voice.key == _selectedTtsVoiceKey) {
+        selectedVoice = voice;
         break;
       }
     }
@@ -183,6 +234,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
       homeAssistantToken: _homeAssistantTokenController.text,
       microphoneDeviceId: _selectedMicrophoneId,
       microphoneDeviceLabel: selectedMicrophone?.displayLabel ?? '',
+      ttsMode: _selectedTtsMode,
+      ttsVoiceKey: _selectedTtsVoiceKey,
+      ttsVoiceLabel: selectedVoice?.label ?? '',
     );
     if (!saved || !mounted) {
       return;
@@ -293,6 +347,40 @@ class _SettingsScreenState extends State<SettingsScreen> {
     });
   }
 
+  Future<void> _testTtsVoice() async {
+    setState(() {
+      _testingTtsVoice = true;
+      _ttsVoiceStatusOk = false;
+      _ttsVoiceStatusMessage = _selectedTtsMode == TtsService.modeBackend
+          ? 'A testar a voz do backend...'
+          : 'A testar a voz selecionada...';
+    });
+
+    final success = await _ttsService.previewVoice(
+      'Ola. Eu sou ${_assistantNameController.text.trim().isEmpty ? _settings.assistantName : _assistantNameController.text.trim()}. Esta e uma amostra da voz selecionada.',
+      mode: _selectedTtsMode,
+      voiceKey: _selectedTtsVoiceKey,
+    );
+
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _testingTtsVoice = false;
+      _ttsVoiceStatusOk = success;
+      if (success) {
+        _ttsVoiceStatusMessage = _selectedTtsMode == TtsService.modeBackend
+            ? 'A voz do backend foi reproduzida com sucesso.'
+            : 'A voz foi reproduzida com sucesso.';
+      } else {
+        _ttsVoiceStatusMessage = _selectedTtsMode == TtsService.modeBackend
+            ? 'Nao consegui reproduzir a voz do backend. Confirma se o core esta ligado e com o TTS configurado.'
+            : 'Nao consegui reproduzir a voz selecionada. Podes experimentar outra ou usar a voz automatica do sistema.';
+      }
+    });
+  }
+
   Future<void> _refreshDevices() async {
     await _deviceRegistry.load();
     if (!mounted) {
@@ -341,6 +429,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _homeAssistantTokenController.dispose();
     _deviceRegistry.dispose();
     _voiceService.dispose();
+    unawaited(_ttsService.stop());
     super.dispose();
   }
 
@@ -515,6 +604,35 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             });
                           },
                           onTest: _testingMicrophone ? null : _testMicrophone,
+                        ),
+                        const SizedBox(height: 14),
+                        _TtsVoiceSelectorCard(
+                          voices: _ttsVoices,
+                          selectedMode: _selectedTtsMode,
+                          selectedVoiceKey: _selectedTtsVoiceKey,
+                          loading: _loadingTtsVoices,
+                          testing: _testingTtsVoice,
+                          statusMessage: _ttsVoiceStatusMessage,
+                          statusOk: _ttsVoiceStatusOk,
+                          onRefresh: _loadingTtsVoices ||
+                                  _selectedTtsMode == TtsService.modeBackend
+                              ? null
+                              : _loadTtsVoices,
+                          onModeChanged: (value) {
+                            setState(() {
+                              _selectedTtsMode = value == TtsService.modeBackend
+                                  ? TtsService.modeBackend
+                                  : TtsService.modeLocal;
+                              _ttsVoiceStatusMessage = null;
+                            });
+                          },
+                          onChanged: (value) {
+                            setState(() {
+                              _selectedTtsVoiceKey = value ?? '';
+                              _ttsVoiceStatusMessage = null;
+                            });
+                          },
+                          onTest: _testingTtsVoice ? null : _testTtsVoice,
                         ),
                       ],
                     ),
@@ -1325,6 +1443,190 @@ class _MicrophoneSelectorCard extends StatelessWidget {
                       )
                     : const Icon(Icons.graphic_eq_rounded),
                 label: Text(testing ? 'A testar...' : 'Testar microfone'),
+              ),
+            ),
+          ],
+        ),
+        if (statusMessage != null) ...[
+          const SizedBox(height: 12),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: accent.withOpacity(0.08),
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(color: accent.withOpacity(0.35)),
+            ),
+            child: Text(
+              statusMessage!,
+              style: TextStyle(
+                color: statusOk ? Colors.white : accent,
+                height: 1.4,
+              ),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _TtsVoiceSelectorCard extends StatelessWidget {
+  const _TtsVoiceSelectorCard({
+    required this.voices,
+    required this.selectedMode,
+    required this.selectedVoiceKey,
+    required this.loading,
+    required this.testing,
+    required this.statusMessage,
+    required this.statusOk,
+    required this.onRefresh,
+    required this.onModeChanged,
+    required this.onChanged,
+    required this.onTest,
+  });
+
+  final List<TtsVoiceOption> voices;
+  final String selectedMode;
+  final String selectedVoiceKey;
+  final bool loading;
+  final bool testing;
+  final String? statusMessage;
+  final bool statusOk;
+  final Future<void> Function()? onRefresh;
+  final ValueChanged<String?> onModeChanged;
+  final ValueChanged<String?> onChanged;
+  final Future<void> Function()? onTest;
+
+  @override
+  Widget build(BuildContext context) {
+    final usesLocalVoice = selectedMode != TtsService.modeBackend;
+    final items = <DropdownMenuItem<String>>[
+      const DropdownMenuItem<String>(
+        value: '',
+        child: Text('Sistema (automatica)'),
+      ),
+      ...voices.map(
+        (voice) => DropdownMenuItem<String>(
+          value: voice.key,
+          child: Text(voice.label),
+        ),
+      ),
+    ];
+
+    final accent = statusOk
+        ? const Color(0xFF4CE7A7)
+        : const Color(0xFFFFCC80);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        DropdownButtonFormField<String>(
+          value: usesLocalVoice ? TtsService.modeLocal : TtsService.modeBackend,
+          items: const <DropdownMenuItem<String>>[
+            DropdownMenuItem<String>(
+              value: TtsService.modeLocal,
+              child: Text('Voz local'),
+            ),
+            DropdownMenuItem<String>(
+              value: TtsService.modeBackend,
+              child: Text('Voz do backend'),
+            ),
+          ],
+          onChanged: onModeChanged,
+          dropdownColor: const Color(0xFF08111B),
+          iconEnabledColor: Colors.white70,
+          style: const TextStyle(color: Colors.white),
+          decoration: InputDecoration(
+            labelText: 'Motor de voz',
+            helperText:
+                'A voz local usa as vozes instaladas no Windows. A voz do backend usa o endpoint /tts do core.',
+            prefixIcon: const Icon(Icons.settings_voice_outlined),
+            labelStyle: TextStyle(color: Colors.white.withOpacity(0.82)),
+            helperStyle: TextStyle(
+              color: Colors.white.withOpacity(0.56),
+              height: 1.45,
+            ),
+            filled: true,
+            fillColor: Colors.white.withOpacity(0.04),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(20),
+              borderSide: BorderSide.none,
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
+        DropdownButtonFormField<String>(
+          value: items.any((item) => item.value == selectedVoiceKey)
+              ? selectedVoiceKey
+              : '',
+          items: items,
+          onChanged: !usesLocalVoice || loading ? null : onChanged,
+          dropdownColor: const Color(0xFF08111B),
+          iconEnabledColor: Colors.white70,
+          style: const TextStyle(color: Colors.white),
+          decoration: InputDecoration(
+            labelText: 'Voz de resposta',
+            helperText:
+                usesLocalVoice
+                    ? 'Escolhe a voz local usada para ler as respostas. O valor "Sistema" usa a voz predefinida do Windows.'
+                    : 'Com a voz do backend ativa, a selecao local fica em espera. Podes voltar a ela a qualquer momento.',
+            prefixIcon: const Icon(Icons.record_voice_over_outlined),
+            labelStyle: TextStyle(color: Colors.white.withOpacity(0.82)),
+            helperStyle: TextStyle(
+              color: Colors.white.withOpacity(0.56),
+              height: 1.45,
+            ),
+            filled: true,
+            fillColor: usesLocalVoice
+                ? Colors.white.withOpacity(0.04)
+                : Colors.white.withOpacity(0.02),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(20),
+              borderSide: BorderSide.none,
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Expanded(
+              child: FilledButton.tonalIcon(
+                onPressed: onRefresh == null ? null : () => unawaited(onRefresh!()),
+                icon: loading
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.refresh_rounded),
+                label: Text(
+                  loading
+                      ? 'A carregar...'
+                      : usesLocalVoice
+                      ? 'Atualizar vozes'
+                      : 'Lista local desativada',
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: FilledButton.tonalIcon(
+                onPressed: onTest == null ? null : () => unawaited(onTest!()),
+                icon: testing
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.play_arrow_rounded),
+                label: Text(
+                  testing
+                      ? 'A testar...'
+                      : usesLocalVoice
+                      ? 'Testar voz'
+                      : 'Testar backend',
+                ),
               ),
             ),
           ],
