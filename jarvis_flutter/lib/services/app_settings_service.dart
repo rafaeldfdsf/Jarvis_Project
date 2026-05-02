@@ -33,6 +33,7 @@ class AppSettingsService extends ChangeNotifier {
   String _assistantName = defaultAssistantName;
   String _userName = '';
   String _wakeWordPhrase = defaultAssistantName;
+  int _wakeWordSensitivity = 40;
   bool _homeAssistantEnabled = false;
   String _homeAssistantUrl = '';
   String _homeAssistantToken = '';
@@ -52,6 +53,7 @@ class AppSettingsService extends ChangeNotifier {
   }
 
   String get userName => _userName.trim();
+  int get wakeWordSensitivity => _wakeWordSensitivity;
   bool get homeAssistantEnabled => _homeAssistantEnabled;
   String get homeAssistantUrl => _homeAssistantUrl.trim();
   String get homeAssistantToken => _homeAssistantToken.trim();
@@ -123,6 +125,7 @@ class AppSettingsService extends ChangeNotifier {
     required String assistantName,
     required String userName,
     required String wakeWordPhrase,
+    required int wakeWordSensitivity,
     required bool homeAssistantEnabled,
     required String homeAssistantUrl,
     required String homeAssistantToken,
@@ -136,6 +139,9 @@ class AppSettingsService extends ChangeNotifier {
     final cleanWakeWordPhrase = wakeWordPhrase.trim().isEmpty
         ? cleanAssistantName
         : wakeWordPhrase.trim();
+    final cleanWakeWordSensitivity = _clampWakeWordSensitivity(
+      wakeWordSensitivity,
+    );
     final cleanHomeAssistantEnabled = homeAssistantEnabled;
     final cleanHomeAssistantUrl = homeAssistantUrl.trim();
     final cleanHomeAssistantToken = homeAssistantToken.trim();
@@ -153,6 +159,7 @@ class AppSettingsService extends ChangeNotifier {
       _assistantName = cleanAssistantName;
       _userName = cleanUserName;
       _wakeWordPhrase = cleanWakeWordPhrase;
+      _wakeWordSensitivity = cleanWakeWordSensitivity;
       _homeAssistantEnabled = cleanHomeAssistantEnabled;
       _homeAssistantUrl = cleanHomeAssistantUrl;
       _homeAssistantToken = cleanHomeAssistantToken;
@@ -166,6 +173,7 @@ class AppSettingsService extends ChangeNotifier {
           assistantName: cleanAssistantName,
           userName: cleanUserName,
           wakeWordPhrase: cleanWakeWordPhrase,
+          wakeWordSensitivity: cleanWakeWordSensitivity,
           homeAssistantEnabled: cleanHomeAssistantEnabled,
           homeAssistantUrl: cleanHomeAssistantUrl,
           homeAssistantToken: cleanHomeAssistantToken,
@@ -176,6 +184,10 @@ class AppSettingsService extends ChangeNotifier {
           await _saveField('assistant_name', cleanAssistantName);
           await _saveField('name', cleanUserName);
           await _saveField('wake_word_phrase', cleanWakeWordPhrase);
+          await _saveField(
+            'wake_word_sensitivity',
+            cleanWakeWordSensitivity.toString(),
+          );
           await _saveField(
             'home_assistant_enabled',
             cleanHomeAssistantEnabled ? 'true' : 'false',
@@ -211,6 +223,7 @@ class AppSettingsService extends ChangeNotifier {
       _assistantName = defaultAssistantName;
       _userName = '';
       _wakeWordPhrase = defaultAssistantName;
+      _wakeWordSensitivity = 40;
       _homeAssistantEnabled = false;
       _homeAssistantUrl = '';
       _homeAssistantToken = '';
@@ -249,6 +262,7 @@ class AppSettingsService extends ChangeNotifier {
     final assistantName = _entryValue(entries, 'assistant_name');
     final userName = _entryValue(entries, 'name');
     final wakeWordPhrase = _entryValue(entries, 'wake_word_phrase');
+    final wakeWordSensitivity = _entryValue(entries, 'wake_word_sensitivity');
     final homeAssistantEnabled = _entryValue(entries, 'home_assistant_enabled');
     final homeAssistantUrl = _entryValue(entries, 'home_assistant_url');
     final homeAssistantToken = _entryValue(entries, 'home_assistant_token');
@@ -268,6 +282,11 @@ class AppSettingsService extends ChangeNotifier {
         : preserveExistingValues
             ? wakeWordOrDefault()
             : _assistantName;
+    _wakeWordSensitivity = wakeWordSensitivity != null
+        ? _clampWakeWordSensitivity(int.tryParse(wakeWordSensitivity) ?? 40)
+        : preserveExistingValues
+            ? _wakeWordSensitivity
+            : 40;
     _homeAssistantEnabled = homeAssistantEnabled != null
         ? _parseBool(homeAssistantEnabled)
         : preserveExistingValues
@@ -302,6 +321,7 @@ class AppSettingsService extends ChangeNotifier {
     final assistantName = values['assistant_name'];
     final userName = values['user_name'];
     final wakeWordPhrase = values['wake_word_phrase'];
+    final wakeWordSensitivity = values['wake_word_sensitivity'];
     final homeAssistantEnabled = values['home_assistant_enabled'];
     final homeAssistantUrl = values['home_assistant_url'];
     final homeAssistantToken = values['home_assistant_token'];
@@ -321,6 +341,11 @@ class AppSettingsService extends ChangeNotifier {
         : preserveExistingValues
             ? wakeWordOrDefault()
             : _assistantName;
+    _wakeWordSensitivity = wakeWordSensitivity != null
+        ? _clampWakeWordSensitivity(int.tryParse(wakeWordSensitivity) ?? 40)
+        : preserveExistingValues
+            ? _wakeWordSensitivity
+            : 40;
     _homeAssistantEnabled = homeAssistantEnabled != null
         ? _parseBool(homeAssistantEnabled)
         : preserveExistingValues
@@ -400,6 +425,9 @@ class AppSettingsService extends ChangeNotifier {
       _wakeWordPhrase = (data['wake_word_phrase']?.toString().trim().isNotEmpty == true)
           ? data['wake_word_phrase'].toString().trim()
           : _assistantName;
+      _wakeWordSensitivity = _clampWakeWordSensitivity(
+        int.tryParse(data['wake_word_sensitivity']?.toString() ?? '') ?? 40,
+      );
       _homeAssistantUrl = data['home_assistant_url']?.toString().trim() ?? '';
       _homeAssistantToken = data['home_assistant_token']?.toString().trim() ?? '';
       _homeAssistantEnabled = data.containsKey('home_assistant_enabled')
@@ -422,6 +450,7 @@ class AppSettingsService extends ChangeNotifier {
         'assistant_name': assistantName,
         'user_name': userName,
         'wake_word_phrase': wakeWordPhrase,
+        'wake_word_sensitivity': wakeWordSensitivity,
         'home_assistant_enabled': homeAssistantEnabled,
         'home_assistant_url': homeAssistantUrl,
         'home_assistant_token': homeAssistantToken,
@@ -452,5 +481,15 @@ class AppSettingsService extends ChangeNotifier {
   bool _parseBool(Object? value) {
     final raw = value?.toString().trim().toLowerCase() ?? '';
     return raw == 'true' || raw == '1' || raw == 'yes' || raw == 'on';
+  }
+
+  int _clampWakeWordSensitivity(int value) {
+    if (value < 0) {
+      return 0;
+    }
+    if (value > 100) {
+      return 100;
+    }
+    return value;
   }
 }

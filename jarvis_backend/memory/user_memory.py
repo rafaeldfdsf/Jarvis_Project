@@ -57,6 +57,8 @@ def _memory_label_from_key(key):
         return "Nome do Assistente"
     if key == "wake_word_phrase":
         return "Wake Word"
+    if key == "wake_word_sensitivity":
+        return "Sensibilidade Wake Word"
     if key == "home_assistant_enabled":
         return "Home Assistant Ativo"
     if key == "home_assistant_url":

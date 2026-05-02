@@ -113,6 +113,7 @@ class AppSettingsUpdateRequest(BaseModel):
     assistant_name: str = ''
     user_name: str = ''
     wake_word_phrase: str = ''
+    wake_word_sensitivity: int = 40
     home_assistant_enabled: bool = False
     home_assistant_url: str = ''
     home_assistant_token: str = ''

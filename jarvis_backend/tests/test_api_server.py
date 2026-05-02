@@ -204,6 +204,7 @@ class ApiServerTests(unittest.TestCase):
                 "assistant_name": "Daniel",
                 "user_name": "Rafael",
                 "wake_word_phrase": "Daniel",
+                "wake_word_sensitivity": 40,
                 "home_assistant_enabled": False,
                 "home_assistant_url": "",
                 "home_assistant_token": "",

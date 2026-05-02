@@ -21,6 +21,7 @@ class WakeWordService {
   Future<bool> startListening({
     required Future<void> Function(String? seededTranscript) onWakeWordDetected,
     String keyword = AppSettingsService.defaultAssistantName,
+    int sensitivity = 40,
   }) async {
     if (_running) {
       return true;
@@ -37,7 +38,10 @@ class WakeWordService {
     final cleanKeyword = keyword.trim().isEmpty
         ? AppSettingsService.defaultAssistantName
         : keyword.trim();
-    final startResult = await _agentService.startWakeWord(keyword: cleanKeyword);
+    final startResult = await _agentService.startWakeWord(
+      keyword: cleanKeyword,
+      sensitivity: sensitivity,
+    );
     if (!startResult.ok) {
       final failureMessage = await _resolveStartErrorMessage(startResult);
       if (_lastStartupError != failureMessage) {
@@ -53,7 +57,10 @@ class WakeWordService {
     _keyword = cleanKeyword;
     _onWakeWordDetected = onWakeWordDetected;
 
-    _logService.addLog('DEBUG', 'Wake word Windows ativa.');
+    _logService.addLog(
+      'DEBUG',
+      'Wake word Windows ativa com sensibilidade $sensitivity.',
+    );
     unawaited(_pollLoop());
     return true;
   }

@@ -58,10 +58,10 @@ PROTECTED_WINDOW_TOKENS = ('jarvis', 'codex', 'flutter')
 
 WAKE_WORD_ENGINE = 'windows_agent_local_fallback'
 DEFAULT_WAKE_WORD_PHRASE = 'jarvis'
+DEFAULT_WAKE_WORD_SENSITIVITY = 40
 SAMPLE_RATE = 16000
 BLOCKSIZE = 1600
 MAX_BUFFER_CHUNKS = 8
-DETECTION_THRESHOLD = 70
 MIN_AUDIO_SECONDS = 0.35
 
 _WAKE_WORD_EVENTS: 'queue.Queue[dict[str, Any]]' = queue.Queue(maxsize=32)
@@ -71,6 +71,7 @@ _WAKE_WORD_THREAD: threading.Thread | None = None
 _WAKE_WORD_RUNTIME: dict[str, Any] | None = None
 _WAKE_WORD_RUNTIME_ERROR: str | None = None
 _CURRENT_WAKE_WORD_PHRASE = DEFAULT_WAKE_WORD_PHRASE
+_CURRENT_WAKE_WORD_SENSITIVITY = DEFAULT_WAKE_WORD_SENSITIVITY
 
 AGENT_DEVICE_ID = (os.getenv('JARVIS_DEVICE_ID') or os.getenv('COMPUTERNAME') or 'pc-windows-01').strip()
 AGENT_DEVICE_NAME = (os.getenv('JARVIS_DEVICE_NAME') or os.getenv('COMPUTERNAME') or AGENT_DEVICE_ID).strip()
@@ -317,6 +318,14 @@ def _sanitize_wake_word_phrase(value: str | None) -> str:
     return normalized or DEFAULT_WAKE_WORD_PHRASE
 
 
+def _sanitize_wake_word_sensitivity(value: Any) -> int:
+    try:
+        sensitivity = int(value)
+    except (TypeError, ValueError):
+        sensitivity = DEFAULT_WAKE_WORD_SENSITIVITY
+    return max(0, min(100, sensitivity))
+
+
 def _normalize_lookup(value: str) -> str:
     normalized = _fold_text((value or '').lower())
     normalized = re.sub(r'[^a-z0-9]+', ' ', normalized)
@@ -518,7 +527,25 @@ def _levenshtein(a: str, b: str) -> int:
     return previous[len(b)]
 
 
-def _matches_wake_word_candidate(value: str, wake_word_phrase: str) -> bool:
+def _score_threshold_for_sensitivity(sensitivity: int) -> int:
+    return max(60, min(88, 88 - round(sensitivity * 0.28)))
+
+
+def _allowed_text_distance(sensitivity: int) -> int:
+    if sensitivity >= 80:
+        return 2
+    if sensitivity >= 45:
+        return 1
+    return 0
+
+
+def _allowed_phonetic_distance(sensitivity: int) -> int:
+    if sensitivity >= 70:
+        return 1
+    return 0
+
+
+def _matches_wake_word_candidate(value: str, wake_word_phrase: str, sensitivity: int) -> bool:
     candidate = value.replace(' ', '')
     wake_word = wake_word_phrase.replace(' ', '')
 
@@ -531,16 +558,16 @@ def _matches_wake_word_candidate(value: str, wake_word_phrase: str) -> bool:
     if candidate == wake_word or phonetic_candidate == phonetic_wake_word:
         return True
 
-    if candidate in wake_word or wake_word in candidate:
+    if sensitivity >= 60 and (candidate in wake_word or wake_word in candidate):
         return len(candidate) >= 4
 
-    if _levenshtein(candidate, wake_word) <= 2:
+    if _levenshtein(candidate, wake_word) <= _allowed_text_distance(sensitivity):
         return True
 
-    return _levenshtein(phonetic_candidate, phonetic_wake_word) <= 1
+    return _levenshtein(phonetic_candidate, phonetic_wake_word) <= _allowed_phonetic_distance(sensitivity)
 
 
-def _contains_wake_word(text: str, wake_word_phrase: str) -> bool:
+def _contains_wake_word(text: str, wake_word_phrase: str, sensitivity: int) -> bool:
     if not text:
         return False
 
@@ -552,7 +579,7 @@ def _contains_wake_word(text: str, wake_word_phrase: str) -> bool:
         candidates.add(f'{words[index]}{words[index + 1]}')
 
     return any(
-        _matches_wake_word_candidate(candidate, wake_word_phrase)
+        _matches_wake_word_candidate(candidate, wake_word_phrase, sensitivity)
         for candidate in candidates
     )
 
@@ -593,6 +620,7 @@ def _load_wake_word_runtime() -> dict[str, Any]:
 def _wait_for_wake_word(stop_event: threading.Event) -> dict[str, Any] | None:
     runtime = _load_wake_word_runtime()
     wake_word_phrase = _CURRENT_WAKE_WORD_PHRASE
+    wake_word_sensitivity = _CURRENT_WAKE_WORD_SENSITIVITY
 
     np = runtime['np']
     sd = runtime['sd']
@@ -674,9 +702,13 @@ def _wait_for_wake_word(stop_event: threading.Event) -> dict[str, Any] | None:
                         score=score,
                     )
 
-                if _contains_wake_word(normalized, wake_word_phrase) or score >= DETECTION_THRESHOLD:
+                if (
+                    _contains_wake_word(normalized, wake_word_phrase, wake_word_sensitivity)
+                    or score >= _score_threshold_for_sensitivity(wake_word_sensitivity)
+                ):
                     return {
                         'keyword': wake_word_phrase,
+                        'sensitivity': wake_word_sensitivity,
                         'transcript': normalized,
                         'raw_transcript': raw_text,
                         'score': score,
@@ -831,6 +863,8 @@ def health() -> dict[str, Any]:
         'wake_word_engine': WAKE_WORD_ENGINE,
         'wake_word_error': _WAKE_WORD_RUNTIME_ERROR,
         'wake_word_phrase': _CURRENT_WAKE_WORD_PHRASE,
+        'wake_word_sensitivity': _CURRENT_WAKE_WORD_SENSITIVITY,
+        'wake_word_threshold': _score_threshold_for_sensitivity(_CURRENT_WAKE_WORD_SENSITIVITY),
     }
 
 
@@ -839,10 +873,14 @@ def start_wake_word(data: dict[str, Any] | None = Body(default=None)) -> dict[st
     requested_phrase = _sanitize_wake_word_phrase(
         (data or {}).get('keyword') or (data or {}).get('wake_word_phrase')
     )
+    requested_sensitivity = _sanitize_wake_word_sensitivity(
+        (data or {}).get('sensitivity')
+    )
 
     with _WAKE_WORD_LOCK:
-        global _CURRENT_WAKE_WORD_PHRASE
+        global _CURRENT_WAKE_WORD_PHRASE, _CURRENT_WAKE_WORD_SENSITIVITY
         _CURRENT_WAKE_WORD_PHRASE = requested_phrase
+        _CURRENT_WAKE_WORD_SENSITIVITY = requested_sensitivity
 
         if _is_wake_word_running():
             return {
@@ -850,6 +888,7 @@ def start_wake_word(data: dict[str, Any] | None = Body(default=None)) -> dict[st
                 'running': True,
                 'engine': WAKE_WORD_ENGINE,
                 'keyword': _CURRENT_WAKE_WORD_PHRASE,
+                'sensitivity': _CURRENT_WAKE_WORD_SENSITIVITY,
             }
 
         try:
@@ -876,6 +915,7 @@ def start_wake_word(data: dict[str, Any] | None = Body(default=None)) -> dict[st
             'running': True,
             'engine': WAKE_WORD_ENGINE,
             'keyword': _CURRENT_WAKE_WORD_PHRASE,
+            'sensitivity': _CURRENT_WAKE_WORD_SENSITIVITY,
         }
 
 

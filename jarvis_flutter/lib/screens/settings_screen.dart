@@ -37,6 +37,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _loadingMicrophones = false;
   bool _testingMicrophone = false;
   bool _homeAssistantEnabled = false;
+  double _wakeWordSensitivity = 40;
   HomeAssistantStatus? _homeAssistantStatus;
   List<MicrophoneDevice> _microphones = const <MicrophoneDevice>[];
   String _selectedMicrophoneId = '';
@@ -64,10 +65,39 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _assistantNameController.text = _settings.assistantName;
     _userNameController.text = _settings.userName;
     _wakeWordController.text = _settings.wakeWordPhrase;
+    _wakeWordSensitivity = _settings.wakeWordSensitivity.toDouble();
     _homeAssistantEnabled = _settings.homeAssistantEnabled;
     _homeAssistantUrlController.text = _settings.homeAssistantUrl;
     _homeAssistantTokenController.text = _settings.homeAssistantToken;
     _selectedMicrophoneId = _settings.microphoneDeviceId;
+  }
+
+  String get _wakeWordSensitivityLabel {
+    final value = _wakeWordSensitivity.round();
+    if (value <= 25) {
+      return 'Baixa';
+    }
+    if (value <= 60) {
+      return 'Normal';
+    }
+    if (value <= 80) {
+      return 'Alta';
+    }
+    return 'Muito alta';
+  }
+
+  String get _wakeWordSensitivityHint {
+    final value = _wakeWordSensitivity.round();
+    if (value <= 25) {
+      return 'Mais exigente. Reduz falsos positivos, mas exige dizer a wake word com mais clareza.';
+    }
+    if (value <= 60) {
+      return 'Equilibrada. Boa opcao para a maioria dos ambientes.';
+    }
+    if (value <= 80) {
+      return 'Mais reativa. Pode ativar melhor à distancia, mas aumenta o risco de disparos acidentais.';
+    }
+    return 'Muito reativa. Usa apenas se o assistente estiver com dificuldade em ouvir a wake word.';
   }
 
   Future<void> _loadMicrophones() async {
@@ -104,6 +134,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       assistantName: _assistantNameController.text,
       userName: _userNameController.text,
       wakeWordPhrase: _wakeWordController.text,
+      wakeWordSensitivity: _wakeWordSensitivity.round(),
       homeAssistantEnabled: _homeAssistantEnabled,
       homeAssistantUrl: _homeAssistantUrlController.text,
       homeAssistantToken: _homeAssistantTokenController.text,
@@ -146,6 +177,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       assistantName: _assistantNameController.text,
       userName: _userNameController.text,
       wakeWordPhrase: _wakeWordController.text,
+      wakeWordSensitivity: _wakeWordSensitivity.round(),
       homeAssistantEnabled: _homeAssistantEnabled,
       homeAssistantUrl: _homeAssistantUrlController.text,
       homeAssistantToken: _homeAssistantTokenController.text,
@@ -400,6 +432,71 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               color: Colors.white.withOpacity(0.68),
                               height: 1.45,
                             ),
+                          ),
+                        ),
+                        const SizedBox(height: 14),
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(14),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withOpacity(0.03),
+                            borderRadius: BorderRadius.circular(18),
+                            border: Border.all(
+                              color: Colors.white.withOpacity(0.08),
+                            ),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  const Icon(
+                                    Icons.tune_rounded,
+                                    color: Color(0xFF7AE7C7),
+                                  ),
+                                  const SizedBox(width: 10),
+                                  Expanded(
+                                    child: Text(
+                                      'Sensibilidade de ativacao: $_wakeWordSensitivityLabel',
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ),
+                                  Text(
+                                    '${_wakeWordSensitivity.round()}%',
+                                    style: TextStyle(
+                                      color: Colors.white.withOpacity(0.72),
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 8),
+                              Text(
+                                _wakeWordSensitivityHint,
+                                style: TextStyle(
+                                  color: Colors.white.withOpacity(0.68),
+                                  height: 1.45,
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              Slider(
+                                value: _wakeWordSensitivity,
+                                min: 0,
+                                max: 100,
+                                divisions: 10,
+                                label: '${_wakeWordSensitivity.round()}%',
+                                activeColor: const Color(0xFF7AE7C7),
+                                inactiveColor: Colors.white24,
+                                onChanged: (value) {
+                                  setState(() {
+                                    _wakeWordSensitivity = value;
+                                  });
+                                },
+                              ),
+                            ],
                           ),
                         ),
                         const SizedBox(height: 14),

@@ -11,6 +11,7 @@ SETTINGS_DEFAULTS = {
     "assistant_name": "Jarvis",
     "user_name": "",
     "wake_word_phrase": "Jarvis",
+    "wake_word_sensitivity": "40",
     "home_assistant_enabled": "false",
     "home_assistant_url": "",
     "home_assistant_token": "",
@@ -20,6 +21,7 @@ SETTINGS_LABELS = {
     "assistant_name": "Nome do Assistente",
     "user_name": "Nome do Utilizador",
     "wake_word_phrase": "Wake Word",
+    "wake_word_sensitivity": "Sensibilidade Wake Word",
     "home_assistant_enabled": "Home Assistant Ativo",
     "home_assistant_url": "URL Home Assistant",
     "home_assistant_token": "Token Home Assistant",
@@ -29,6 +31,13 @@ SETTINGS_LABELS = {
 def _normalize_setting_value(key: str, value: object) -> str:
     if key == "home_assistant_enabled":
         return "true" if str(value).strip().lower() in {"1", "true", "yes", "on"} else "false"
+    if key == "wake_word_sensitivity":
+        try:
+            level = int(str(value).strip() or SETTINGS_DEFAULTS[key])
+        except ValueError:
+            level = int(SETTINGS_DEFAULTS[key])
+        level = max(0, min(100, level))
+        return str(level)
     return str(value or "").strip()
 
 
@@ -103,6 +112,10 @@ def load_settings_values() -> dict[str, str]:
 
     wake_word_phrase = values.get("wake_word_phrase", "").strip() or assistant_name
     values["wake_word_phrase"] = wake_word_phrase
+    values["wake_word_sensitivity"] = _normalize_setting_value(
+        "wake_word_sensitivity",
+        values.get("wake_word_sensitivity", SETTINGS_DEFAULTS["wake_word_sensitivity"]),
+    )
 
     user_name = values.get("user_name", "").strip()
     values["user_name"] = user_name

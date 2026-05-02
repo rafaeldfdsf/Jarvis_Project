@@ -26,6 +26,7 @@ class AssistantRuntimeService extends ChangeNotifier {
   bool _wakeWordEnabled = Platform.isWindows;
   bool _wakeWordReady = false;
   String _lastWakeWordPhrase = AppSettingsService.defaultAssistantName;
+  int _lastWakeWordSensitivity = 40;
 
   bool get wakeWordEnabled => _wakeWordEnabled;
   bool get wakeWordReady => _wakeWordReady;
@@ -39,6 +40,7 @@ class AssistantRuntimeService extends ChangeNotifier {
     _initializing = true;
     await _settings.load();
     _lastWakeWordPhrase = _settings.wakeWordPhrase;
+    _lastWakeWordSensitivity = _settings.wakeWordSensitivity;
     _settings.addListener(_handleSettingsChanged);
     _initialized = true;
     _initializing = false;
@@ -86,6 +88,7 @@ class AssistantRuntimeService extends ChangeNotifier {
     final started = await _wakeWordService.startListening(
       onWakeWordDetected: _handleWakeWordDetected,
       keyword: _settings.wakeWordPhrase,
+      sensitivity: _settings.wakeWordSensitivity,
     );
 
     if (_wakeWordReady != started) {
@@ -108,11 +111,16 @@ class AssistantRuntimeService extends ChangeNotifier {
 
   void _handleSettingsChanged() {
     final updatedWakeWordPhrase = _settings.wakeWordPhrase;
-    if (_lastWakeWordPhrase == updatedWakeWordPhrase) {
+    final updatedWakeWordSensitivity = _settings.wakeWordSensitivity;
+    if (
+      _lastWakeWordPhrase == updatedWakeWordPhrase &&
+      _lastWakeWordSensitivity == updatedWakeWordSensitivity
+    ) {
       return;
     }
 
     _lastWakeWordPhrase = updatedWakeWordPhrase;
+    _lastWakeWordSensitivity = updatedWakeWordSensitivity;
     if (_wakeWordEnabled && !_captureInProgress) {
       unawaited(ensureWakeWordListening(forceRestart: true));
     }
