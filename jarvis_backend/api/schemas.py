@@ -7,6 +7,55 @@ class ChatRequest(BaseModel):
     message: str
 
 
+class AuthRegisterRequest(BaseModel):
+    email: str
+    password: str
+    display_name: str = ''
+
+
+class AuthVerifyEmailRequest(BaseModel):
+    email: str
+    code: str
+
+
+class AuthForgotPasswordRequest(BaseModel):
+    email: str
+
+
+class AuthResetPasswordRequest(BaseModel):
+    email: str
+    code: str
+    new_password: str
+
+
+class AuthLoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+class AuthUserResponse(BaseModel):
+    id: str
+    email: str
+    display_name: str = ''
+    created_at: str
+    email_verified_at: str | None = None
+    email_verified: bool = False
+
+
+class AuthStatusResponse(BaseModel):
+    ok: bool = True
+    message: str
+    email: str = ''
+    email_sent: bool = False
+    verification_required: bool = False
+
+
+class AuthSessionResponse(BaseModel):
+    access_token: str
+    token_type: str = 'bearer'
+    user: AuthUserResponse
+
+
 class SessionResponse(BaseModel):
     session_id: str
     tools: list

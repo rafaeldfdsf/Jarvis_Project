@@ -20,6 +20,7 @@ class AssistantRuntimeService extends ChangeNotifier {
   final AppSettingsService _settings = AppSettingsService();
   final WakeWordService _wakeWordService = WakeWordService();
 
+  bool _authenticated = false;
   bool _initialized = false;
   bool _initializing = false;
   bool _captureInProgress = false;
@@ -45,7 +46,30 @@ class AssistantRuntimeService extends ChangeNotifier {
     _initialized = true;
     _initializing = false;
     notifyListeners();
-    await ensureWakeWordListening();
+    if (_authenticated) {
+      await ensureWakeWordListening();
+    }
+  }
+
+  Future<void> setAuthenticated(bool authenticated) async {
+    _authenticated = authenticated;
+
+    if (!authenticated) {
+      _captureInProgress = false;
+      _wakeWordReady = false;
+      notifyListeners();
+      await _wakeWordService.cancel();
+      return;
+    }
+
+    await _settings.load(force: true);
+    _lastWakeWordPhrase = _settings.wakeWordPhrase;
+    _lastWakeWordSensitivity = _settings.wakeWordSensitivity;
+    notifyListeners();
+
+    if (_initialized) {
+      await ensureWakeWordListening(forceRestart: true);
+    }
   }
 
   Future<void> setWakeWordEnabled(bool enabled) async {
@@ -75,7 +99,12 @@ class AssistantRuntimeService extends ChangeNotifier {
   }
 
   Future<void> ensureWakeWordListening({bool forceRestart = false}) async {
-    if (!_wakeWordEnabled || _captureInProgress || !Platform.isWindows) {
+    if (
+      !_authenticated ||
+      !_wakeWordEnabled ||
+      _captureInProgress ||
+      !Platform.isWindows
+    ) {
       return;
     }
 

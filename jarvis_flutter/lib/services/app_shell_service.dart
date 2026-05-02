@@ -91,4 +91,13 @@ class AppShellService extends ChangeNotifier {
     _wakePromptVisible = false;
     notifyListeners();
   }
+
+  void resetForAccountSwitch() {
+    _dismissTimer?.cancel();
+    _dismissTimer = null;
+    _wakePromptVisible = false;
+    _voiceOverlayMode = false;
+    _wakePromptMessage = 'Podes falar agora.';
+    notifyListeners();
+  }
 }

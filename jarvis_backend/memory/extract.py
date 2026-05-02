@@ -1,27 +1,30 @@
 """
-Extração de factos a partir da fala do utilizador.
+Extracao de factos a partir da fala do utilizador.
 
 Responsabilidade:
-- Detetar padrões simples (ex: nome, preferências, lembretes)
-- Guardar na memória persistente
+- Detetar padroes simples (ex: nome, preferencias, lembretes)
+- Guardar na memoria persistente
 
-Não é NLP avançado, é heurística.
+Nao e NLP avancado, e heuristica.
 """
 
+from __future__ import annotations
+
 import re
+
 from memory.user_memory import save_fact, save_preference, save_reminder
 
-def extract_user_facts(text):
+
+def extract_user_facts(text, user_id: str | None = None):
     """
     Analisa texto e extrai factos simples do utilizador.
     """
     text_l = text.lower()
 
-    # Detetar nome
     patterns = [
         r"chamo-me\s+(.+)",
-        r"o meu nome é\s+(.+)",
-        r"meu nome é\s+(.+)",
+        r"o meu nome e\s+(.+)",
+        r"meu nome e\s+(.+)",
         r"eu sou o\s+(.+)",
         r"eu sou a\s+(.+)",
         r"eu sou da\s+(.+)",
@@ -32,15 +35,11 @@ def extract_user_facts(text):
         match = re.search(pattern, text_l)
         if match:
             name = match.group(1)
-
             name = re.sub(r"[^\w\sÀ-ÿ]", "", name)
             name = " ".join(w.capitalize() for w in name.split())
-
-            save_fact("name", name)
-            print(f"Nome guardado: {name}")
+            save_fact("name", name, user_id=user_id)
             return
 
-    # Detetar preferências (ex: "Sempre que eu te perguntar o tempo quero que me digas o tempo nas Caldas da Rainha")
     preference_patterns = [
         r"sempre que (.+?) quero que (.+)",
         r"sempre que (.+?) quero (.+)",
@@ -54,11 +53,9 @@ def extract_user_facts(text):
             condition = match.group(1).strip()
             action = match.group(2).strip()
             preference = f"Sempre que {condition}, quero que {action}."
-            save_preference(preference)
-            print(f"Preferência guardada: {preference}")
+            save_preference(preference, user_id=user_id)
             return
 
-    # Detetar lembretes (ex: "Quero que te lembres que o aniversario do Manel é no dia 5 de março")
     reminder_patterns = [
         r"quero que te lembres que (.+)",
         r"lembra-te que (.+)",
@@ -69,6 +66,5 @@ def extract_user_facts(text):
         match = re.search(pattern, text_l, re.IGNORECASE)
         if match:
             reminder = match.group(1).strip()
-            save_reminder(reminder)
-            print(f"Lembrete guardado: {reminder}")
+            save_reminder(reminder, user_id=user_id)
             return

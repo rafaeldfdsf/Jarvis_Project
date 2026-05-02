@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 
 import '../config/app_endpoints.dart';
 import '../models/app_setting_entry.dart';
+import '../models/auth_models.dart';
 import '../models/chat_response.dart';
 import '../models/home_assistant_device.dart';
 import '../models/memory_entry.dart';
@@ -17,6 +18,189 @@ class ApiService {
   static const Duration _requestTimeout = Duration(seconds: 15);
 
   final String baseUrl = AppEndpoints.apiBaseUrl;
+
+  Future<AuthStatusModel> register({
+    required String email,
+    required String password,
+    required String displayName,
+  }) async {
+    return _postAuthStatus(
+      '/auth/register',
+      body: <String, dynamic>{
+        'email': email,
+        'password': password,
+        'display_name': displayName,
+      },
+    );
+  }
+
+  Future<AuthSessionModel> login({
+    required String email,
+    required String password,
+  }) async {
+    return _authenticate(
+      '/auth/login',
+      body: <String, dynamic>{
+        'email': email,
+        'password': password,
+      },
+    );
+  }
+
+  Future<AuthSessionModel> verifyEmail({
+    required String email,
+    required String code,
+  }) async {
+    return _authenticate(
+      '/auth/verify-email',
+      body: <String, dynamic>{
+        'email': email,
+        'code': code,
+      },
+    );
+  }
+
+  Future<AuthStatusModel> resendVerification({
+    required String email,
+  }) async {
+    return _postAuthStatus(
+      '/auth/resend-verification',
+      body: <String, dynamic>{
+        'email': email,
+      },
+    );
+  }
+
+  Future<AuthStatusModel> requestPasswordReset({
+    required String email,
+  }) async {
+    return _postAuthStatus(
+      '/auth/forgot-password',
+      body: <String, dynamic>{
+        'email': email,
+      },
+    );
+  }
+
+  Future<AuthStatusModel> resetPassword({
+    required String email,
+    required String code,
+    required String newPassword,
+  }) async {
+    return _postAuthStatus(
+      '/auth/reset-password',
+      body: <String, dynamic>{
+        'email': email,
+        'code': code,
+        'new_password': newPassword,
+      },
+    );
+  }
+
+  Future<AuthUserModel> fetchCurrentUser() async {
+    try {
+      final res = await http
+          .get(
+            Uri.parse('$baseUrl/auth/me'),
+            headers: AppEndpoints.apiHeaders(),
+          )
+          .timeout(_requestTimeout);
+
+      if (res.statusCode != 200) {
+        throw Exception(
+          _extractErrorMessage(res.body) ??
+              'Erro ao carregar a sessao (${res.statusCode}).',
+        );
+      }
+
+      return AuthUserModel.fromJson(
+        jsonDecode(res.body) as Map<String, dynamic>,
+      );
+    } on TimeoutException {
+      throw Exception(AppEndpoints.apiUnavailableMessage());
+    } on SocketException {
+      throw Exception(AppEndpoints.apiUnavailableMessage());
+    } on http.ClientException {
+      throw Exception(AppEndpoints.apiUnavailableMessage());
+    }
+  }
+
+  Future<void> logout() async {
+    try {
+      await http
+          .post(
+            Uri.parse('$baseUrl/auth/logout'),
+            headers: AppEndpoints.apiHeaders(),
+          )
+          .timeout(_requestTimeout);
+    } catch (_) {
+      // Ignore remote logout failures because local logout should still work.
+    }
+  }
+
+  Future<AuthSessionModel> _authenticate(
+    String path, {
+    required Map<String, dynamic> body,
+  }) async {
+    try {
+      final res = await http
+          .post(
+            Uri.parse('$baseUrl$path'),
+            headers: AppEndpoints.apiHeaders(includeJsonContentType: true),
+            body: jsonEncode(body),
+          )
+          .timeout(_requestTimeout);
+
+      if (res.statusCode != 200) {
+        throw Exception(
+          _extractErrorMessage(res.body) ??
+              'Erro de autenticacao (${res.statusCode}).',
+        );
+      }
+
+      return AuthSessionModel.fromJson(
+        jsonDecode(res.body) as Map<String, dynamic>,
+      );
+    } on TimeoutException {
+      throw Exception(AppEndpoints.apiUnavailableMessage());
+    } on SocketException {
+      throw Exception(AppEndpoints.apiUnavailableMessage());
+    } on http.ClientException {
+      throw Exception(AppEndpoints.apiUnavailableMessage());
+    }
+  }
+
+  Future<AuthStatusModel> _postAuthStatus(
+    String path, {
+    required Map<String, dynamic> body,
+  }) async {
+    try {
+      final res = await http
+          .post(
+            Uri.parse('$baseUrl$path'),
+            headers: AppEndpoints.apiHeaders(includeJsonContentType: true),
+            body: jsonEncode(body),
+          )
+          .timeout(_requestTimeout);
+
+      if (res.statusCode != 200) {
+        throw Exception(
+          _extractErrorMessage(res.body) ??
+              'Erro de autenticacao (${res.statusCode}).',
+        );
+      }
+
+      return AuthStatusModel.fromJson(
+        jsonDecode(res.body) as Map<String, dynamic>,
+      );
+    } on TimeoutException {
+      throw Exception(AppEndpoints.apiUnavailableMessage());
+    } on SocketException {
+      throw Exception(AppEndpoints.apiUnavailableMessage());
+    } on http.ClientException {
+      throw Exception(AppEndpoints.apiUnavailableMessage());
+    }
+  }
 
   Future<String> createSession() async {
     try {

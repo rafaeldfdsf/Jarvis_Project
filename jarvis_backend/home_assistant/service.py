@@ -11,8 +11,8 @@ from home_assistant.devices import resolve_device_reference
 from memory.user_memory import load_facts
 
 
-def _is_enabled() -> bool:
-    facts = load_facts()
+def _is_enabled(user_id: str | None = None) -> bool:
+    facts = load_facts(user_id=user_id)
     raw = str(facts.get("home_assistant_enabled") or "").strip().lower()
     if raw:
         return raw in {"1", "true", "yes", "on"}
@@ -21,38 +21,38 @@ def _is_enabled() -> bool:
     return bool(url and token)
 
 
-def _base_url() -> str:
-    if not _is_enabled():
+def _base_url(user_id: str | None = None) -> str:
+    if not _is_enabled(user_id=user_id):
         raise ValueError("Home Assistant desativado nas configuracoes.")
-    facts = load_facts()
+    facts = load_facts(user_id=user_id)
     url = (facts.get("home_assistant_url") or "").strip().rstrip("/")
     if not url:
         raise ValueError("URL do Home Assistant nao configurada.")
     return url
 
 
-def _token() -> str:
-    if not _is_enabled():
+def _token(user_id: str | None = None) -> str:
+    if not _is_enabled(user_id=user_id):
         raise ValueError("Home Assistant desativado nas configuracoes.")
-    facts = load_facts()
+    facts = load_facts(user_id=user_id)
     token = (facts.get("home_assistant_token") or "").strip()
     if not token:
         raise ValueError("Token do Home Assistant nao configurado.")
     return token
 
 
-def _headers() -> dict[str, str]:
+def _headers(user_id: str | None = None) -> dict[str, str]:
     return {
-        "Authorization": f"Bearer {_token()}",
+        "Authorization": f"Bearer {_token(user_id=user_id)}",
         "Content-Type": "application/json",
     }
 
 
-def _request(method: str, path: str, *, json_payload: Any | None = None) -> Any:
+def _request(method: str, path: str, *, json_payload: Any | None = None, user_id: str | None = None) -> Any:
     response = requests.request(
         method=method,
-        url=f"{_base_url()}{path}",
-        headers=_headers(),
+        url=f"{_base_url(user_id=user_id)}{path}",
+        headers=_headers(user_id=user_id),
         json=json_payload,
         timeout=settings.weather_timeout_seconds,
     )
@@ -62,9 +62,9 @@ def _request(method: str, path: str, *, json_payload: Any | None = None) -> Any:
     return response.json()
 
 
-def connection_status() -> dict[str, Any]:
-    facts = load_facts()
-    enabled = _is_enabled()
+def connection_status(user_id: str | None = None) -> dict[str, Any]:
+    facts = load_facts(user_id=user_id)
+    enabled = _is_enabled(user_id=user_id)
     url = (facts.get("home_assistant_url") or "").strip().rstrip("/")
     token = (facts.get("home_assistant_token") or "").strip()
 
@@ -87,8 +87,8 @@ def connection_status() -> dict[str, Any]:
         }
 
     try:
-        config = _request("GET", "/api/config")
-        states = _request("GET", "/api/states")
+        config = _request("GET", "/api/config", user_id=user_id)
+        states = _request("GET", "/api/states", user_id=user_id)
         return {
             "enabled": True,
             "configured": True,
@@ -108,8 +108,8 @@ def connection_status() -> dict[str, Any]:
         }
 
 
-def list_entities(domain: str | None = None) -> list[dict[str, Any]]:
-    states = _request("GET", "/api/states")
+def list_entities(domain: str | None = None, user_id: str | None = None) -> list[dict[str, Any]]:
+    states = _request("GET", "/api/states", user_id=user_id)
     if not isinstance(states, list):
         return []
 
@@ -143,6 +143,7 @@ def call_service(
     *,
     entity_id: str | None = None,
     service_data: dict[str, Any] | None = None,
+    user_id: str | None = None,
 ) -> dict[str, Any]:
     clean_domain = (domain or "").strip().lower()
     clean_service = (service or "").strip().lower()
@@ -157,6 +158,7 @@ def call_service(
         resolved_device = resolve_device_reference(
             requested_entity_id,
             domain=clean_domain,
+            user_id=user_id,
         )
         if "entity_id" not in payload:
             payload["entity_id"] = (
@@ -169,6 +171,7 @@ def call_service(
         "POST",
         f"/api/services/{clean_domain}/{clean_service}",
         json_payload=payload,
+        user_id=user_id,
     )
 
     return {

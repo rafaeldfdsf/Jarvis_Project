@@ -117,7 +117,12 @@ def extract_tool_call(text: str):
     return None
 
 
-def execute_tool(tool_name: str, arguments: dict, allow_desktop_tools: bool = True):
+def execute_tool(
+    tool_name: str,
+    arguments: dict,
+    allow_desktop_tools: bool = True,
+    user_id: str | None = None,
+):
     try:
         if tool_name in LOCAL_AUTOMATION_TOOL_NAMES.union({'control_computer'}) and not allow_desktop_tools:
             return tool_result(
@@ -127,15 +132,15 @@ def execute_tool(tool_name: str, arguments: dict, allow_desktop_tools: bool = Tr
             )
 
         if tool_name == "get_home_assistant_status":
-            return tool_result(tool_name, True, connection_status())
+            return tool_result(tool_name, True, connection_status(user_id=user_id))
 
         if tool_name == "list_home_assistant_entities":
             domain = arguments.get("domain", "")
-            return tool_result(tool_name, True, list_entities(domain=domain))
+            return tool_result(tool_name, True, list_entities(domain=domain, user_id=user_id))
 
         if tool_name == "list_home_assistant_devices":
             domain = arguments.get("domain", "")
-            return tool_result(tool_name, True, list_devices(domain=domain))
+            return tool_result(tool_name, True, list_devices(domain=domain, user_id=user_id))
 
         if tool_name == "call_home_assistant_service":
             return tool_result(
@@ -146,6 +151,7 @@ def execute_tool(tool_name: str, arguments: dict, allow_desktop_tools: bool = Tr
                     arguments.get("service", ""),
                     entity_id=arguments.get("entity_id"),
                     service_data=arguments.get("service_data"),
+                    user_id=user_id,
                 ),
             )
 
@@ -194,7 +200,7 @@ def execute_tool(tool_name: str, arguments: dict, allow_desktop_tools: bool = Tr
             return tool_result(tool_name, True, press_keys(keys))
 
         if tool_name == "list_routines":
-            return tool_result(tool_name, True, list_routines())
+            return tool_result(tool_name, True, list_routines(user_id=user_id))
 
         if tool_name == "create_routine":
             return tool_result(
@@ -206,6 +212,7 @@ def execute_tool(tool_name: str, arguments: dict, allow_desktop_tools: bool = Tr
                     trigger_text=arguments.get("trigger_text", ""),
                     actions=arguments.get("actions"),
                     enabled=arguments.get("enabled", True) is not False,
+                    user_id=user_id,
                 ),
             )
 
@@ -220,15 +227,16 @@ def execute_tool(tool_name: str, arguments: dict, allow_desktop_tools: bool = Tr
                     trigger_text=arguments.get("trigger_text", ""),
                     actions=arguments.get("actions"),
                     enabled=arguments.get("enabled", True) is not False,
+                    user_id=user_id,
                 ),
             )
 
         if tool_name == "delete_routine":
-            deleted = delete_routine(arguments.get("routine_id", ""))
+            deleted = delete_routine(arguments.get("routine_id", ""), user_id=user_id)
             return tool_result(tool_name, deleted, {"deleted": deleted})
 
         if tool_name == "run_routine":
-            return tool_result(tool_name, True, run_routine(arguments.get("routine_id", "")))
+            return tool_result(tool_name, True, run_routine(arguments.get("routine_id", ""), user_id=user_id))
 
         return tool_result(tool_name, False, f"Tool desconhecida: {tool_name}")
 

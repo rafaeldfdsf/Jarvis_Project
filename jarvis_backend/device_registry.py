@@ -20,6 +20,7 @@ def init_device_registry() -> None:
         """
         CREATE TABLE IF NOT EXISTS devices (
             device_id TEXT PRIMARY KEY,
+            owner_user_id TEXT,
             name TEXT NOT NULL,
             device_type TEXT NOT NULL,
             platform TEXT NOT NULL DEFAULT '',
@@ -47,6 +48,10 @@ def init_device_registry() -> None:
         )
         """
     )
+    cursor.execute("PRAGMA table_info(devices)")
+    columns = {row["name"] for row in cursor.fetchall()}
+    if "owner_user_id" not in columns:
+        cursor.execute("ALTER TABLE devices ADD COLUMN owner_user_id TEXT")
     conn.commit()
     conn.close()
 
@@ -77,6 +82,7 @@ def _list_capabilities(cursor, device_id: str) -> list[str]:
 def _normalize_device_row(row, cursor) -> dict[str, Any]:
     return {
         "device_id": row["device_id"],
+        "owner_user_id": row["owner_user_id"] or "",
         "name": row["name"],
         "device_type": row["device_type"],
         "platform": row["platform"],
@@ -105,6 +111,7 @@ def upsert_device(
     metadata: dict[str, Any] | None = None,
     capabilities: list[str] | None = None,
     connected: bool | None = None,
+    owner_user_id: str | None = None,
 ) -> dict[str, Any]:
     init_device_registry()
     clean_device_id = (device_id or "").strip()
@@ -122,6 +129,7 @@ def upsert_device(
             """
             INSERT INTO devices (
                 device_id,
+                owner_user_id,
                 name,
                 device_type,
                 platform,
@@ -133,10 +141,11 @@ def upsert_device(
                 created_at,
                 updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 clean_device_id,
+                (owner_user_id or "").strip() or None,
                 (name or clean_device_id).strip() or clean_device_id,
                 (device_type or "unknown").strip() or "unknown",
                 (platform or "").strip(),
@@ -157,7 +166,8 @@ def upsert_device(
         cursor.execute(
             """
             UPDATE devices
-            SET name = ?,
+            SET owner_user_id = ?,
+                name = ?,
                 device_type = ?,
                 platform = ?,
                 location = ?,
@@ -168,6 +178,7 @@ def upsert_device(
             WHERE device_id = ?
             """,
             (
+                (owner_user_id or existing["owner_user_id"] or "").strip() or None,
                 (name or existing["name"]).strip() or clean_device_id,
                 (device_type or existing["device_type"]).strip() or "unknown",
                 (platform if platform is not None else existing["platform"]).strip(),
@@ -243,33 +254,59 @@ def touch_device(device_id: str) -> None:
     conn.close()
 
 
-def list_registered_devices() -> list[dict[str, Any]]:
+def list_registered_devices(user_id: str | None = None) -> list[dict[str, Any]]:
     init_device_registry()
     conn = connect()
     cursor = conn.cursor()
-    cursor.execute(
-        """
-        SELECT *
-        FROM devices
-        ORDER BY
-            preferred_for_desktop_control DESC,
-            preferred_for_wake_word DESC,
-            preferred_for_tts DESC,
-            connected DESC,
-            name COLLATE NOCASE ASC
-        """
-    )
+    if user_id is None:
+        cursor.execute(
+            """
+            SELECT *
+            FROM devices
+            WHERE owner_user_id IS NULL
+            ORDER BY
+                preferred_for_desktop_control DESC,
+                preferred_for_wake_word DESC,
+                preferred_for_tts DESC,
+                connected DESC,
+                name COLLATE NOCASE ASC
+            """
+        )
+    else:
+        cursor.execute(
+            """
+            SELECT *
+            FROM devices
+            WHERE owner_user_id = ? OR owner_user_id IS NULL
+            ORDER BY
+                preferred_for_desktop_control DESC,
+                preferred_for_wake_word DESC,
+                preferred_for_tts DESC,
+                connected DESC,
+                name COLLATE NOCASE ASC
+            """,
+            ((user_id or "").strip(),),
+        )
     rows = cursor.fetchall()
     devices = [_normalize_device_row(row, cursor) for row in rows]
     conn.close()
     return devices
 
 
-def get_device(device_id: str) -> dict[str, Any] | None:
+def get_device(device_id: str, user_id: str | None = None) -> dict[str, Any] | None:
     init_device_registry()
     conn = connect()
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM devices WHERE device_id = ?", (device_id,))
+    if user_id is None:
+        cursor.execute(
+            "SELECT * FROM devices WHERE device_id = ? AND owner_user_id IS NULL",
+            (device_id,),
+        )
+    else:
+        cursor.execute(
+            "SELECT * FROM devices WHERE device_id = ? AND (owner_user_id = ? OR owner_user_id IS NULL)",
+            (device_id, (user_id or "").strip()),
+        )
     row = cursor.fetchone()
     if row is None:
         conn.close()
@@ -280,9 +317,9 @@ def get_device(device_id: str) -> dict[str, Any] | None:
     return payload
 
 
-def update_device(device_id: str, updates: dict[str, Any]) -> dict[str, Any]:
+def update_device(device_id: str, updates: dict[str, Any], user_id: str | None = None) -> dict[str, Any]:
     init_device_registry()
-    existing = get_device(device_id)
+    existing = get_device(device_id, user_id=user_id)
     if existing is None:
         raise KeyError(f"Dispositivo nao encontrado: {device_id}")
 
@@ -312,15 +349,26 @@ def update_device(device_id: str, updates: dict[str, Any]) -> dict[str, Any]:
     )
     for field in unique_preference_fields:
         if clean_updates.get(field) is True:
-            cursor.execute(
-                f"UPDATE devices SET {field} = 0, updated_at = ? WHERE device_id <> ?",
-                (now, device_id),
-            )
+            if user_id is None:
+                cursor.execute(
+                    f"UPDATE devices SET {field} = 0, updated_at = ? WHERE device_id <> ? AND owner_user_id IS NULL",
+                    (now, device_id),
+                )
+            else:
+                cursor.execute(
+                    f"""
+                    UPDATE devices
+                    SET {field} = 0, updated_at = ?
+                    WHERE device_id <> ? AND (owner_user_id = ? OR owner_user_id IS NULL)
+                    """,
+                    (now, device_id, (user_id or "").strip()),
+                )
 
     cursor.execute(
         """
         UPDATE devices
-        SET name = ?,
+        SET owner_user_id = ?,
+            name = ?,
             location = ?,
             platform = ?,
             is_active = ?,
@@ -331,6 +379,7 @@ def update_device(device_id: str, updates: dict[str, Any]) -> dict[str, Any]:
         WHERE device_id = ?
         """,
         (
+            (user_id or existing["owner_user_id"] or "").strip() or None,
             str(clean_updates.get("name", existing["name"])).strip() or existing["device_id"],
             str(clean_updates.get("location", existing["location"])).strip(),
             str(clean_updates.get("platform", existing["platform"])).strip(),

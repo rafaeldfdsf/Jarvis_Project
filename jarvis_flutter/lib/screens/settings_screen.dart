@@ -7,6 +7,7 @@ import '../models/registered_device.dart';
 import '../models/routine.dart';
 import '../services/api_service.dart';
 import '../services/app_settings_service.dart';
+import '../services/auth_service.dart';
 import '../services/device_registry_service.dart';
 import '../services/tts_service.dart';
 import '../services/voice_service.dart';
@@ -23,6 +24,7 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   final ApiService _api = ApiService();
   final AppSettingsService _settings = AppSettingsService();
+  final AuthService _auth = AuthService();
   final DeviceRegistryService _deviceRegistry = DeviceRegistryService();
   final VoiceService _voiceService = VoiceService();
   final TtsService _ttsService = TtsService();
@@ -394,6 +396,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
+  Future<void> _logout() async {
+    await _auth.logout();
+  }
+
   Future<void> _updateDeviceRole(
     String deviceId, {
     bool? isActive,
@@ -439,7 +445,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final topPadding = widget.embedded && isCompact ? 78.0 : 18.0;
 
     return AnimatedBuilder(
-      animation: Listenable.merge([_settings, _deviceRegistry]),
+      animation: Listenable.merge([_settings, _deviceRegistry, _auth]),
       builder: (context, _) {
         return Container(
           decoration: const BoxDecoration(
@@ -461,6 +467,62 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     assistantName: _settings.assistantName,
                     wakeWordPhrase: _settings.wakeWordPhrase,
                     loading: _settings.loading,
+                  ),
+                  const SizedBox(height: 16),
+                  _SectionCard(
+                    title: 'Conta',
+                    subtitle:
+                        'A tua sessao define que configuracoes e dispositivos sincronizados vais ver nesta app.',
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(16),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withOpacity(0.03),
+                            borderRadius: BorderRadius.circular(18),
+                            border: Border.all(
+                              color: Colors.white.withOpacity(0.08),
+                            ),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                (_auth.user?.displayName ?? '').trim().isNotEmpty
+                                    ? _auth.user!.displayName
+                                    : 'Sessao autenticada',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              const SizedBox(height: 6),
+                              Text(
+                                _auth.user?.email ?? 'Sem email carregado.',
+                                style: TextStyle(
+                                  color: Colors.white.withOpacity(0.72),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 14),
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: FilledButton.tonalIcon(
+                            onPressed: _auth.loading ? null : _logout,
+                            icon: const Icon(Icons.logout_rounded),
+                            label: Text(
+                              _auth.loading
+                                  ? 'A terminar sessao...'
+                                  : 'Terminar sessao',
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                   const SizedBox(height: 16),
                   _SectionCard(

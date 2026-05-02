@@ -45,27 +45,83 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def init_settings_db() -> None:
-    conn = connect()
-    cursor = conn.cursor()
+def _table_columns(cursor, table_name: str) -> set[str]:
+    cursor.execute(f"PRAGMA table_info({table_name})")
+    return {row["name"] for row in cursor.fetchall()}
+
+
+def _ensure_settings_schema(cursor) -> None:
     cursor.execute(
         """
         CREATE TABLE IF NOT EXISTS app_settings (
-            key TEXT PRIMARY KEY,
+            user_id TEXT,
+            key TEXT NOT NULL,
             value TEXT NOT NULL,
             updated_at TEXT NOT NULL
         )
         """
     )
+
+    columns = _table_columns(cursor, "app_settings")
+    if "user_id" in columns:
+        cursor.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_app_settings_user_key
+            ON app_settings (user_id, key)
+            """
+        )
+        return
+
+    cursor.execute("ALTER TABLE app_settings RENAME TO app_settings_legacy")
+    cursor.execute(
+        """
+        CREATE TABLE app_settings (
+            user_id TEXT,
+            key TEXT NOT NULL,
+            value TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    cursor.execute(
+        """
+        INSERT INTO app_settings (user_id, key, value, updated_at)
+        SELECT NULL, key, value, updated_at
+        FROM app_settings_legacy
+        """
+    )
+    cursor.execute("DROP TABLE app_settings_legacy")
+    cursor.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_app_settings_user_key
+        ON app_settings (user_id, key)
+        """
+    )
+
+
+def _user_filter_sql(user_id: str | None) -> tuple[str, tuple[object, ...]]:
+    if user_id is None:
+        return "user_id IS NULL", ()
+    return "user_id = ?", ((user_id or "").strip(),)
+
+
+def init_settings_db() -> None:
+    conn = connect()
+    cursor = conn.cursor()
+    _ensure_settings_schema(cursor)
     conn.commit()
     conn.close()
 
 
-def list_settings() -> list[dict[str, str]]:
+def list_settings(user_id: str | None = None) -> list[dict[str, str]]:
     init_settings_db()
     conn = connect()
     cursor = conn.cursor()
-    cursor.execute("SELECT key, value, updated_at FROM app_settings ORDER BY key")
+    where_sql, params = _user_filter_sql(user_id)
+    cursor.execute(
+        f"SELECT key, value, updated_at FROM app_settings WHERE {where_sql} ORDER BY key",
+        params,
+    )
     rows = cursor.fetchall()
     conn.close()
 
@@ -101,10 +157,10 @@ def list_settings() -> list[dict[str, str]]:
     return entries
 
 
-def load_settings_values() -> dict[str, str]:
+def load_settings_values(user_id: str | None = None) -> dict[str, str]:
     values = {
         entry["key"]: entry["value"]
-        for entry in list_settings()
+        for entry in list_settings(user_id=user_id)
     }
 
     assistant_name = values.get("assistant_name", "").strip() or SETTINGS_DEFAULTS["assistant_name"]
@@ -127,9 +183,10 @@ def load_settings_values() -> dict[str, str]:
     return values
 
 
-def update_settings(values: dict[str, str]) -> list[dict[str, str]]:
+def update_settings(values: dict[str, str], user_id: str | None = None) -> list[dict[str, str]]:
     init_settings_db()
     now = _utc_now_iso()
+    clean_user_id = (user_id or "").strip() or None
     conn = connect()
     cursor = conn.cursor()
 
@@ -138,26 +195,28 @@ def update_settings(values: dict[str, str]) -> list[dict[str, str]]:
             continue
         clean_value = _normalize_setting_value(key, value)
         cursor.execute(
+            "DELETE FROM app_settings WHERE user_id IS ? AND key = ?",
+            (clean_user_id, key),
+        )
+        cursor.execute(
             """
-            INSERT INTO app_settings (key, value, updated_at)
-            VALUES (?, ?, ?)
-            ON CONFLICT(key) DO UPDATE SET
-                value=excluded.value,
-                updated_at=excluded.updated_at
+            INSERT INTO app_settings (user_id, key, value, updated_at)
+            VALUES (?, ?, ?, ?)
             """,
-            (key, clean_value, now),
+            (clean_user_id, key, clean_value, now),
         )
 
     conn.commit()
     conn.close()
-    return list_settings()
+    return list_settings(user_id=user_id)
 
 
-def clear_settings() -> int:
+def clear_settings(user_id: str | None = None) -> int:
     init_settings_db()
     conn = connect()
     cursor = conn.cursor()
-    cursor.execute("DELETE FROM app_settings")
+    where_sql, params = _user_filter_sql(user_id)
+    cursor.execute(f"DELETE FROM app_settings WHERE {where_sql}", params)
     deleted_count = cursor.rowcount
     conn.commit()
     conn.close()

@@ -217,6 +217,16 @@ class HomeAssistantDevicesService extends ChangeNotifier {
     }
   }
 
+  void resetForAccountSwitch() {
+    _devices.clear();
+    _loading = false;
+    _loadedOnce = false;
+    _homeAssistantEnabled = false;
+    _homeAssistantConfigured = false;
+    _error = null;
+    notifyListeners();
+  }
+
   String _normalizeError(Object error) {
     final text = error.toString();
     if (text.startsWith('Exception: ')) {

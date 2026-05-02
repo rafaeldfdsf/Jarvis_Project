@@ -59,11 +59,11 @@ BASE_SYSTEM_PROMPT = (
 )
 
 
-def build_system_prompt(available_tools=None):
+def build_system_prompt(available_tools=None, user_id: str | None = None):
     """
     Constroi o system prompt final com memoria persistente.
     """
-    facts = load_facts()
+    facts = load_facts(user_id=user_id)
     assistant_name = (facts.get("assistant_name") or "Jarvis").strip() or "Jarvis"
     wake_word_phrase = (facts.get("wake_word_phrase") or assistant_name).strip() or assistant_name
     home_assistant_url = (facts.get("home_assistant_url") or "").strip()
@@ -82,7 +82,7 @@ def build_system_prompt(available_tools=None):
             f"O Home Assistant esta configurado em {home_assistant_url}. "
             "Podes controlar dispositivos da casa usando as tools dedicadas.\n"
         )
-        alias_map = device_alias_map()
+        alias_map = device_alias_map(user_id=user_id)
         if alias_map:
             prompt += "Dispositivos conhecidos e aliases configurados:\n"
             for entity_id, data in alias_map.items():

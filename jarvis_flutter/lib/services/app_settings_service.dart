@@ -104,12 +104,12 @@ class AppSettingsService extends ChangeNotifier {
 
       try {
         final entries = await _api.fetchAppSettings();
-        _applySettingsEntries(entries, preserveExistingValues: hasLocalSettings);
+        _applySettingsEntries(entries, preserveExistingValues: false);
         await _persistLocalSettings();
       } catch (error) {
         try {
           final entries = await _api.fetchMemoryEntries();
-          _applyEntries(entries, preserveExistingValues: hasLocalSettings);
+          _applyEntries(entries, preserveExistingValues: false);
           await _persistLocalSettings();
           _warning = _normalizeError(error);
         } catch (_) {
@@ -322,6 +322,24 @@ class AppSettingsService extends ChangeNotifier {
         : preserveExistingValues
             ? _homeAssistantToken
             : '';
+  }
+
+  Future<void> resetForAccountSwitch() async {
+    _assistantName = defaultAssistantName;
+    _userName = '';
+    _wakeWordPhrase = defaultAssistantName;
+    _wakeWordSensitivity = 40;
+    _homeAssistantEnabled = false;
+    _homeAssistantUrl = '';
+    _homeAssistantToken = '';
+    _loading = false;
+    _saving = false;
+    _loadedOnce = false;
+    _pendingLoad = null;
+    _error = null;
+    _warning = null;
+    await _persistLocalSettings();
+    notifyListeners();
   }
 
   void _applySettingsEntries(
