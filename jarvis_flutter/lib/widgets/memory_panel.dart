@@ -7,9 +7,13 @@ class MemoryPanel extends StatefulWidget {
   const MemoryPanel({
     super.key,
     this.title = 'Memoria do Assistente',
+    this.memoryService,
+    this.autoLoad = true,
   });
 
   final String title;
+  final MemoryService? memoryService;
+  final bool autoLoad;
 
   @override
   State<MemoryPanel> createState() => _MemoryPanelState();
@@ -18,17 +22,20 @@ class MemoryPanel extends StatefulWidget {
 class _MemoryPanelState extends State<MemoryPanel> {
   static const String _allTypes = 'all';
 
-  final MemoryService memoryService = MemoryService();
   final TextEditingController _searchController = TextEditingController();
 
   String _selectedType = _allTypes;
+
+  MemoryService get memoryService => widget.memoryService ?? MemoryService();
 
   @override
   void initState() {
     super.initState();
     memoryService.addListener(_onMemoryUpdated);
     _searchController.addListener(_onFiltersChanged);
-    memoryService.loadEntries();
+    if (widget.autoLoad) {
+      memoryService.loadEntries();
+    }
   }
 
   @override
@@ -204,7 +211,9 @@ class _MemoryPanelState extends State<MemoryPanel> {
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             decoration: BoxDecoration(
               color: Colors.cyanAccent.withOpacity(0.08),
-              borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(16),
+              ),
             ),
             child: Row(
               children: [
@@ -229,7 +238,9 @@ class _MemoryPanelState extends State<MemoryPanel> {
                   tooltip: 'Atualizar',
                 ),
                 TextButton(
-                  onPressed: entries.isEmpty || memoryService.loading ? null : _clearAll,
+                  onPressed: entries.isEmpty || memoryService.loading
+                      ? null
+                      : _clearAll,
                   child: const Text('Limpar'),
                 ),
               ],
@@ -284,7 +295,10 @@ class _MemoryPanelState extends State<MemoryPanel> {
             decoration: InputDecoration(
               hintText: 'Pesquisar por nome, chave, tipo ou conteudo...',
               hintStyle: TextStyle(color: Colors.white.withOpacity(0.5)),
-              prefixIcon: const Icon(Icons.search_rounded, color: Colors.cyanAccent),
+              prefixIcon: const Icon(
+                Icons.search_rounded,
+                color: Colors.cyanAccent,
+              ),
               suffixIcon: _searchController.text.trim().isEmpty
                   ? null
                   : IconButton(
@@ -369,7 +383,8 @@ class _MemoryPanelState extends State<MemoryPanel> {
                   ),
                 ),
               ),
-              if (_searchController.text.trim().isNotEmpty || _selectedType != _allTypes)
+              if (_searchController.text.trim().isNotEmpty ||
+                  _selectedType != _allTypes)
                 TextButton.icon(
                   onPressed: _clearFilters,
                   icon: const Icon(Icons.filter_alt_off_rounded, size: 16),
@@ -414,13 +429,19 @@ class _MemoryPanelState extends State<MemoryPanel> {
               const SizedBox(height: 12),
               const Text(
                 'Nenhum registo corresponde aos filtros atuais.',
-                style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+                style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w600,
+                ),
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 8),
               Text(
                 'Ajusta a pesquisa ou muda o filtro de tipo para veres mais resultados.',
-                style: TextStyle(color: Colors.white.withOpacity(0.65), height: 1.45),
+                style: TextStyle(
+                  color: Colors.white.withOpacity(0.65),
+                  height: 1.45,
+                ),
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 12),
@@ -437,7 +458,9 @@ class _MemoryPanelState extends State<MemoryPanel> {
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        final tableWidth = constraints.maxWidth < 920 ? 920.0 : constraints.maxWidth;
+        final tableWidth = constraints.maxWidth < 920
+            ? 920.0
+            : constraints.maxWidth;
 
         return SingleChildScrollView(
           padding: const EdgeInsets.all(10),
@@ -454,21 +477,32 @@ class _MemoryPanelState extends State<MemoryPanel> {
                 child: Column(
                   children: [
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 20,
+                        vertical: 16,
+                      ),
                       decoration: BoxDecoration(
                         color: Colors.white.withOpacity(0.04),
                         borderRadius: const BorderRadius.vertical(
                           top: Radius.circular(18),
                         ),
                         border: Border(
-                          bottom: BorderSide(color: Colors.white.withOpacity(0.08)),
+                          bottom: BorderSide(
+                            color: Colors.white.withOpacity(0.08),
+                          ),
                         ),
                       ),
                       child: const Row(
                         children: [
                           Expanded(flex: 2, child: _MemoryHeaderCell('Tipo')),
-                          Expanded(flex: 4, child: _MemoryHeaderCell('Registo')),
-                          Expanded(flex: 5, child: _MemoryHeaderCell('Conteudo')),
+                          Expanded(
+                            flex: 4,
+                            child: _MemoryHeaderCell('Registo'),
+                          ),
+                          Expanded(
+                            flex: 5,
+                            child: _MemoryHeaderCell('Conteudo'),
+                          ),
                           Expanded(flex: 2, child: _MemoryHeaderCell('Acoes')),
                         ],
                       ),
@@ -496,7 +530,8 @@ class _MemoryPanelState extends State<MemoryPanel> {
     final query = _normalizeText(_searchController.text);
 
     return entries.where((entry) {
-      final matchesType = _selectedType == _allTypes || entry.type == _selectedType;
+      final matchesType =
+          _selectedType == _allTypes || entry.type == _selectedType;
       if (!matchesType) {
         return false;
       }
@@ -515,8 +550,8 @@ class _MemoryPanelState extends State<MemoryPanel> {
   List<String> _availableTypes(List<MemoryEntry> entries) {
     final types = entries.map((entry) => entry.type).toSet();
     const preferredOrder = ['fact', 'preference', 'reminder'];
-    final extraTypes = types.where((type) => !preferredOrder.contains(type)).toList()
-      ..sort();
+    final extraTypes =
+        types.where((type) => !preferredOrder.contains(type)).toList()..sort();
 
     final orderedTypes = <String>[
       for (final type in preferredOrder)
@@ -598,10 +633,7 @@ class _MemoryHeaderCell extends StatelessWidget {
   Widget build(BuildContext context) {
     return Text(
       label,
-      style: const TextStyle(
-        color: Colors.white,
-        fontWeight: FontWeight.w700,
-      ),
+      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700),
     );
   }
 }
@@ -629,9 +661,7 @@ class _MemoryRow extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
       decoration: BoxDecoration(
         border: showDivider
-            ? Border(
-                bottom: BorderSide(color: Colors.white.withOpacity(0.08)),
-              )
+            ? Border(bottom: BorderSide(color: Colors.white.withOpacity(0.08)))
             : null,
       ),
       child: Row(
@@ -639,10 +669,7 @@ class _MemoryRow extends StatelessWidget {
         children: [
           Expanded(
             flex: 2,
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: typeChip,
-            ),
+            child: Align(alignment: Alignment.centerLeft, child: typeChip),
           ),
           Expanded(
             flex: 4,
@@ -675,10 +702,7 @@ class _MemoryRow extends StatelessWidget {
                 entry.value,
                 maxLines: 3,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: Colors.white70,
-                  height: 1.45,
-                ),
+                style: const TextStyle(color: Colors.white70, height: 1.45),
               ),
             ),
           ),

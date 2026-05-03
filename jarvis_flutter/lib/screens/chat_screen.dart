@@ -10,8 +10,8 @@ import '../models/chat_message.dart';
 import '../models/chat_response.dart';
 import '../services/agent_service.dart';
 import '../services/activity_history_service.dart';
-import '../services/api_service.dart';
 import '../services/app_settings_service.dart';
+import '../services/conversation_service.dart';
 import '../services/memory_service.dart';
 import '../services/voice_service.dart';
 
@@ -25,15 +25,13 @@ class ChatScreen extends StatefulWidget {
 }
 
 class _ChatScreenState extends State<ChatScreen> {
-  final api = ApiService();
   final settings = AppSettingsService();
+  final conversation = ConversationService();
   final controller = TextEditingController();
   final scrollController = ScrollController();
   final voiceService = VoiceService();
   final activityHistory = ActivityHistoryService();
 
-  List<ChatMessage> messages = [];
-  String? sessionId;
   bool loading = false;
   bool isListening = false;
   bool isRecording = false;
@@ -41,44 +39,8 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void initState() {
     super.initState();
-    startSession();
-  }
-
-  String _formatError(Object error) {
-    final text = error.toString();
-    return text.startsWith('Exception: ')
-        ? text.substring('Exception: '.length)
-        : text;
-  }
-
-  Future<bool> _ensureSession() async {
-    if (sessionId != null) {
-      return true;
-    }
-
-    try {
-      sessionId = await api.createSession();
-      if (mounted) {
-        setState(() {});
-      }
-      return true;
-    } catch (error) {
-      if (!mounted) {
-        return false;
-      }
-
-      setState(() {
-        loading = false;
-        isListening = false;
-        isRecording = false;
-        messages.add(ChatMessage(_formatError(error), false));
-      });
-      return false;
-    }
-  }
-
-  void startSession() async {
-    await _ensureSession();
+    conversation.addListener(_handleConversationChanged);
+    unawaited(conversation.ensureSession());
   }
 
   void _scrollToBottom() {
@@ -95,45 +57,36 @@ class _ChatScreenState extends State<ChatScreen> {
     });
   }
 
+  void _handleConversationChanged() {
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {});
+    _scrollToBottom();
+  }
+
   Future<void> sendMessage([String? input]) async {
     final text = (input ?? controller.text).trim();
 
     if (text.isEmpty) return;
-    if (!await _ensureSession()) return;
 
     controller.clear();
 
     setState(() {
-      messages.add(ChatMessage(text, true));
       loading = true;
     });
-    _scrollToBottom();
 
-    try {
-      final response = await api.sendMessage(sessionId!, text);
-      await MemoryService().refresh();
-      await _recordResponseHistory(response, origin: 'chat');
+    final response = await conversation.sendTextMessage(text);
+    await MemoryService().refresh();
+    await _recordResponseHistory(response, origin: 'chat');
+    await handleClientAction(response.clientAction, origin: 'chat');
 
-      if (!mounted) return;
+    if (!mounted) return;
 
-      setState(() {
-        messages.add(ChatMessage(response.reply, false));
-        loading = false;
-      });
-      _scrollToBottom();
-
-      await handleClientAction(response.clientAction, origin: 'chat');
-    } catch (error) {
-      if (!mounted) {
-        return;
-      }
-
-      setState(() {
-        messages.add(ChatMessage(_formatError(error), false));
-        loading = false;
-      });
-      _scrollToBottom();
-    }
+    setState(() {
+      loading = false;
+    });
   }
 
   Future<void> _recordResponseHistory(
@@ -224,7 +177,10 @@ class _ChatScreenState extends State<ChatScreen> {
 
     if (action.type == 'open_url' && action.url != null) {
       if (Platform.isWindows) {
-        final result = await sendPcAction('open_url', extra: {'url': action.url});
+        final result = await sendPcAction(
+          'open_url',
+          extra: {'url': action.url},
+        );
         await activityHistory.recordClientAction(
           origin: origin,
           action: action,
@@ -313,48 +269,26 @@ class _ChatScreenState extends State<ChatScreen> {
       return;
     }
 
-    if (!await _ensureSession()) return;
-
     setState(() {
       loading = true;
     });
 
-    try {
-      final response = await api.sendVoiceTurn(
-        sessionId!,
-        capture.wavBytes,
-        platform: Platform.operatingSystem,
-        locale: Platform.localeName,
-      );
-      await MemoryService().refresh();
-      await _recordResponseHistory(response, origin: 'voice');
+    final response = await conversation.sendVoiceTurn(
+      capture.wavBytes,
+      platform: Platform.operatingSystem,
+      locale: Platform.localeName,
+    );
+    await MemoryService().refresh();
+    await _recordResponseHistory(response, origin: 'voice');
+    await handleClientAction(response.clientAction, origin: 'voice');
 
-      if (!mounted) {
-        return;
-      }
-
-      setState(() {
-        final transcript = response.transcript.trim();
-        if (transcript.isNotEmpty) {
-          messages.add(ChatMessage(transcript, true));
-        }
-        messages.add(ChatMessage(response.reply, false));
-        loading = false;
-      });
-      _scrollToBottom();
-
-      await handleClientAction(response.clientAction, origin: 'voice');
-    } catch (error) {
-      if (!mounted) {
-        return;
-      }
-
-      setState(() {
-        messages.add(ChatMessage(_formatError(error), false));
-        loading = false;
-      });
-      _scrollToBottom();
+    if (!mounted) {
+      return;
     }
+
+    setState(() {
+      loading = false;
+    });
   }
 
   String? _guessPackageName(String app) {
@@ -383,6 +317,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   void dispose() {
+    conversation.removeListener(_handleConversationChanged);
     controller.dispose();
     scrollController.dispose();
     voiceService.dispose();
@@ -621,15 +556,17 @@ class _ChatScreenState extends State<ChatScreen> {
                             color: Colors.white.withOpacity(0.04),
                             borderRadius: BorderRadius.circular(999),
                             border: Border.all(
-                              color: sessionId != null
+                              color: conversation.sessionId != null
                                   ? const Color(0xFF42D9FF).withOpacity(0.24)
                                   : Colors.white.withOpacity(0.08),
                             ),
                           ),
                           child: Text(
-                            sessionId != null ? 'Sessao ativa' : 'A ligar...',
+                            conversation.sessionId != null
+                                ? 'Sessao ativa'
+                                : 'A ligar...',
                             style: TextStyle(
-                              color: sessionId != null
+                              color: conversation.sessionId != null
                                   ? const Color(0xFF42D9FF)
                                   : Colors.white70,
                               fontSize: 12,
@@ -648,16 +585,21 @@ class _ChatScreenState extends State<ChatScreen> {
                         borderRadius: BorderRadius.circular(28),
                         border: Border.all(color: const Color(0xFF17324C)),
                       ),
-                      child: messages.isEmpty
+                      child: conversation.messages.isEmpty
                           ? _buildEmptyState()
                           : ListView.builder(
                               controller: scrollController,
-                              padding: const EdgeInsets.fromLTRB(18, 20, 18, 20),
-                              itemCount: messages.length,
+                              padding: const EdgeInsets.fromLTRB(
+                                18,
+                                20,
+                                18,
+                                20,
+                              ),
+                              itemCount: conversation.messages.length,
                               itemBuilder: (context, index) {
                                 return _buildMessageBubble(
                                   context,
-                                  messages[index],
+                                  conversation.messages[index],
                                 );
                               },
                             ),

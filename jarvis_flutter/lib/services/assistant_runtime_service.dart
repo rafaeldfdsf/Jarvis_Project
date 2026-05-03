@@ -9,29 +9,119 @@ import 'wake_word_service.dart';
 
 class AssistantRuntimeService extends ChangeNotifier {
   static final AssistantRuntimeService _instance =
-      AssistantRuntimeService._internal();
+      AssistantRuntimeService._internal(
+        settingsListenable: AppSettingsService(),
+        loadSettings: ({bool force = false}) =>
+            AppSettingsService().load(force: force),
+        readWakeWordPhrase: () => AppSettingsService().wakeWordPhrase,
+        readWakeWordSensitivity: () => AppSettingsService().wakeWordSensitivity,
+        startWakeWordListening:
+            ({
+              required onWakeWordDetected,
+              required keyword,
+              required sensitivity,
+            }) {
+              return WakeWordService().startListening(
+                onWakeWordDetected: onWakeWordDetected,
+                keyword: keyword,
+                sensitivity: sensitivity,
+              );
+            },
+        cancelWakeWordListening: () => WakeWordService().cancel(),
+        stopWakeWordListening: () => WakeWordService().stopListening(),
+        requestWakeActivation: ({String? message}) =>
+            AppShellService().requestWakeActivation(message: message),
+        isWindows: () => Platform.isWindows,
+      );
 
   factory AssistantRuntimeService() {
     return _instance;
   }
 
-  AssistantRuntimeService._internal();
+  AssistantRuntimeService._internal({
+    required Listenable settingsListenable,
+    required Future<void> Function({bool force}) loadSettings,
+    required String Function() readWakeWordPhrase,
+    required int Function() readWakeWordSensitivity,
+    required Future<bool> Function({
+      required Future<void> Function(String? seededTranscript)
+      onWakeWordDetected,
+      required String keyword,
+      required int sensitivity,
+    })
+    startWakeWordListening,
+    required Future<void> Function() cancelWakeWordListening,
+    required Future<void> Function() stopWakeWordListening,
+    required void Function({String? message}) requestWakeActivation,
+    required bool Function() isWindows,
+  }) : _settingsListenable = settingsListenable,
+       _loadSettings = loadSettings,
+       _readWakeWordPhrase = readWakeWordPhrase,
+       _readWakeWordSensitivity = readWakeWordSensitivity,
+       _startWakeWordListening = startWakeWordListening,
+       _cancelWakeWordListening = cancelWakeWordListening,
+       _stopWakeWordListening = stopWakeWordListening,
+       _requestWakeActivation = requestWakeActivation,
+       _isWindows = isWindows;
 
-  final AppSettingsService _settings = AppSettingsService();
-  final WakeWordService _wakeWordService = WakeWordService();
+  @visibleForTesting
+  factory AssistantRuntimeService.test({
+    required Listenable settingsListenable,
+    required Future<void> Function({bool force}) loadSettings,
+    required String Function() readWakeWordPhrase,
+    required int Function() readWakeWordSensitivity,
+    required Future<bool> Function({
+      required Future<void> Function(String? seededTranscript)
+      onWakeWordDetected,
+      required String keyword,
+      required int sensitivity,
+    })
+    startWakeWordListening,
+    required Future<void> Function() cancelWakeWordListening,
+    required Future<void> Function() stopWakeWordListening,
+    required void Function({String? message}) requestWakeActivation,
+    required bool Function() isWindows,
+  }) {
+    return AssistantRuntimeService._internal(
+      settingsListenable: settingsListenable,
+      loadSettings: loadSettings,
+      readWakeWordPhrase: readWakeWordPhrase,
+      readWakeWordSensitivity: readWakeWordSensitivity,
+      startWakeWordListening: startWakeWordListening,
+      cancelWakeWordListening: cancelWakeWordListening,
+      stopWakeWordListening: stopWakeWordListening,
+      requestWakeActivation: requestWakeActivation,
+      isWindows: isWindows,
+    );
+  }
+
+  final Listenable _settingsListenable;
+  final Future<void> Function({bool force}) _loadSettings;
+  final String Function() _readWakeWordPhrase;
+  final int Function() _readWakeWordSensitivity;
+  final Future<bool> Function({
+    required Future<void> Function(String? seededTranscript) onWakeWordDetected,
+    required String keyword,
+    required int sensitivity,
+  })
+  _startWakeWordListening;
+  final Future<void> Function() _cancelWakeWordListening;
+  final Future<void> Function() _stopWakeWordListening;
+  final void Function({String? message}) _requestWakeActivation;
+  final bool Function() _isWindows;
 
   bool _authenticated = false;
   bool _initialized = false;
   bool _initializing = false;
   bool _captureInProgress = false;
-  bool _wakeWordEnabled = Platform.isWindows;
+  bool _wakeWordEnabled = true;
   bool _wakeWordReady = false;
   String _lastWakeWordPhrase = AppSettingsService.defaultAssistantName;
   int _lastWakeWordSensitivity = 40;
 
   bool get wakeWordEnabled => _wakeWordEnabled;
   bool get wakeWordReady => _wakeWordReady;
-  String get wakeWordPhrase => _settings.wakeWordPhrase;
+  String get wakeWordPhrase => _readWakeWordPhrase();
 
   Future<void> initialize() async {
     if (_initialized || _initializing) {
@@ -39,10 +129,11 @@ class AssistantRuntimeService extends ChangeNotifier {
     }
 
     _initializing = true;
-    await _settings.load();
-    _lastWakeWordPhrase = _settings.wakeWordPhrase;
-    _lastWakeWordSensitivity = _settings.wakeWordSensitivity;
-    _settings.addListener(_handleSettingsChanged);
+    _wakeWordEnabled = _isWindows();
+    await _loadSettings();
+    _lastWakeWordPhrase = _readWakeWordPhrase();
+    _lastWakeWordSensitivity = _readWakeWordSensitivity();
+    _settingsListenable.addListener(_handleSettingsChanged);
     _initialized = true;
     _initializing = false;
     notifyListeners();
@@ -58,13 +149,13 @@ class AssistantRuntimeService extends ChangeNotifier {
       _captureInProgress = false;
       _wakeWordReady = false;
       notifyListeners();
-      await _wakeWordService.cancel();
+      await _cancelWakeWordListening();
       return;
     }
 
-    await _settings.load(force: true);
-    _lastWakeWordPhrase = _settings.wakeWordPhrase;
-    _lastWakeWordSensitivity = _settings.wakeWordSensitivity;
+    await _loadSettings(force: true);
+    _lastWakeWordPhrase = _readWakeWordPhrase();
+    _lastWakeWordSensitivity = _readWakeWordSensitivity();
     notifyListeners();
 
     if (_initialized) {
@@ -73,11 +164,11 @@ class AssistantRuntimeService extends ChangeNotifier {
   }
 
   Future<void> setWakeWordEnabled(bool enabled) async {
-    _wakeWordEnabled = enabled && Platform.isWindows;
+    _wakeWordEnabled = enabled && _isWindows();
     if (!_wakeWordEnabled) {
       _wakeWordReady = false;
       notifyListeners();
-      await _wakeWordService.cancel();
+      await _cancelWakeWordListening();
       return;
     }
 
@@ -89,7 +180,7 @@ class AssistantRuntimeService extends ChangeNotifier {
     _captureInProgress = true;
     _wakeWordReady = false;
     notifyListeners();
-    unawaited(_wakeWordService.stopListening());
+    unawaited(_stopWakeWordListening());
     return Future<void>.value();
   }
 
@@ -99,25 +190,23 @@ class AssistantRuntimeService extends ChangeNotifier {
   }
 
   Future<void> ensureWakeWordListening({bool forceRestart = false}) async {
-    if (
-      !_authenticated ||
-      !_wakeWordEnabled ||
-      _captureInProgress ||
-      !Platform.isWindows
-    ) {
+    if (!_authenticated ||
+        !_wakeWordEnabled ||
+        _captureInProgress ||
+        !_isWindows()) {
       return;
     }
 
     if (forceRestart) {
-      await _wakeWordService.cancel();
+      await _cancelWakeWordListening();
       _wakeWordReady = false;
       notifyListeners();
     }
 
-    final started = await _wakeWordService.startListening(
+    final started = await _startWakeWordListening(
       onWakeWordDetected: _handleWakeWordDetected,
-      keyword: _settings.wakeWordPhrase,
-      sensitivity: _settings.wakeWordSensitivity,
+      keyword: _readWakeWordPhrase(),
+      sensitivity: _readWakeWordSensitivity(),
     );
 
     if (_wakeWordReady != started) {
@@ -133,18 +222,16 @@ class AssistantRuntimeService extends ChangeNotifier {
 
     _wakeWordReady = false;
     notifyListeners();
-    AppShellService().requestWakeActivation(
-      message: 'Wake word "${_settings.wakeWordPhrase}" detetada. Podes falar.',
+    _requestWakeActivation(
+      message: 'Wake word "${_readWakeWordPhrase()}" detetada. Podes falar.',
     );
   }
 
   void _handleSettingsChanged() {
-    final updatedWakeWordPhrase = _settings.wakeWordPhrase;
-    final updatedWakeWordSensitivity = _settings.wakeWordSensitivity;
-    if (
-      _lastWakeWordPhrase == updatedWakeWordPhrase &&
-      _lastWakeWordSensitivity == updatedWakeWordSensitivity
-    ) {
+    final updatedWakeWordPhrase = _readWakeWordPhrase();
+    final updatedWakeWordSensitivity = _readWakeWordSensitivity();
+    if (_lastWakeWordPhrase == updatedWakeWordPhrase &&
+        _lastWakeWordSensitivity == updatedWakeWordSensitivity) {
       return;
     }
 
@@ -153,5 +240,11 @@ class AssistantRuntimeService extends ChangeNotifier {
     if (_wakeWordEnabled && !_captureInProgress) {
       unawaited(ensureWakeWordListening(forceRestart: true));
     }
+  }
+
+  @override
+  void dispose() {
+    _settingsListenable.removeListener(_handleSettingsChanged);
+    super.dispose();
   }
 }

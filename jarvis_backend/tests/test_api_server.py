@@ -29,6 +29,16 @@ class ApiServerTests(unittest.TestCase):
         self.assertTrue(response.json()["auth_enabled"])
         self.assertIn("email_enabled", response.json())
 
+    @patch("api.server.count_users", return_value=1)
+    def test_health_reports_auth_enabled_when_users_exist_without_api_token(self, mock_count_users):
+        server.settings = replace(server.settings, api_token="")
+
+        response = self.client.get("/health")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["auth_enabled"])
+        mock_count_users.assert_called()
+
     def test_sessions_require_auth_when_token_is_configured(self):
         response = self.client.post("/sessions")
 
@@ -307,7 +317,7 @@ class ApiServerTests(unittest.TestCase):
         return_value={
             "session_id": "sess-1",
             "tools": [{"name": "get_weather"}],
-            "desktop_tools_enabled": False,
+            "desktop_tools_enabled": True,
         },
     )
     def test_create_session_with_bearer_token(self, mock_create_session):
@@ -315,6 +325,7 @@ class ApiServerTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["session_id"], "sess-1")
+        self.assertTrue(response.json()["desktop_tools_enabled"])
         mock_create_session.assert_called_once()
 
     @patch.object(
@@ -324,7 +335,7 @@ class ApiServerTests(unittest.TestCase):
             "session_id": "sess-1",
             "reply": "Ola",
             "tool_result": None,
-            "desktop_tools_enabled": False,
+            "desktop_tools_enabled": True,
             "client_action": None,
         },
     )
@@ -337,6 +348,7 @@ class ApiServerTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["reply"], "Ola")
+        self.assertTrue(response.json()["desktop_tools_enabled"])
         mock_chat.assert_called_once_with("sess-1", "Ola")
 
     @patch.object(server.assistant, "chat", side_effect=KeyError("Sessao desconhecida: sess-404"))
@@ -529,7 +541,7 @@ class ApiServerTests(unittest.TestCase):
             "session_id": "sess-1",
             "reply": "A abrir o Spotify.",
             "tool_result": None,
-            "desktop_tools_enabled": False,
+            "desktop_tools_enabled": True,
             "client_action": {
                 "type": "pc_action",
                 "action": "open_app",

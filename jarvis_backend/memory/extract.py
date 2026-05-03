@@ -15,6 +15,13 @@ import re
 from memory.user_memory import save_fact, save_preference, save_reminder
 
 
+def _normalize_fragment(value: str) -> str:
+    clean_value = value.strip()
+    clean_value = re.sub(r"\s+", " ", clean_value)
+    clean_value = re.sub(r"[.!?,;:\-–—\s]+$", "", clean_value)
+    return clean_value.strip()
+
+
 def extract_user_facts(text, user_id: str | None = None):
     """
     Analisa texto e extrai factos simples do utilizador.
@@ -34,8 +41,8 @@ def extract_user_facts(text, user_id: str | None = None):
     for pattern in patterns:
         match = re.search(pattern, text_l)
         if match:
-            name = match.group(1)
-            name = re.sub(r"[^\w\sÀ-ÿ]", "", name)
+            name = _normalize_fragment(match.group(1))
+            name = re.sub(r"[^\w\s-]", "", name)
             name = " ".join(w.capitalize() for w in name.split())
             save_fact("name", name, user_id=user_id)
             return
@@ -50,8 +57,8 @@ def extract_user_facts(text, user_id: str | None = None):
     for pattern in preference_patterns:
         match = re.search(pattern, text_l, re.IGNORECASE)
         if match:
-            condition = match.group(1).strip()
-            action = match.group(2).strip()
+            condition = _normalize_fragment(match.group(1))
+            action = _normalize_fragment(match.group(2))
             preference = f"Sempre que {condition}, quero que {action}."
             save_preference(preference, user_id=user_id)
             return
@@ -65,6 +72,6 @@ def extract_user_facts(text, user_id: str | None = None):
     for pattern in reminder_patterns:
         match = re.search(pattern, text_l, re.IGNORECASE)
         if match:
-            reminder = match.group(1).strip()
+            reminder = _normalize_fragment(match.group(1))
             save_reminder(reminder, user_id=user_id)
             return

@@ -89,7 +89,7 @@ from settings_store import clear_settings, init_settings_db, list_settings, upda
 configure_logging(settings.log_level)
 logger = get_logger(__name__)
 client = OpenAI(timeout=OPENAI_TIMEOUT_SECONDS)
-assistant = AssistantService(enable_desktop_tools=False)
+assistant = AssistantService(enable_desktop_tools=True)
 router = APIRouter()
 init_auth_db()
 init_routines_db()
@@ -123,6 +123,10 @@ def _auth_error() -> HTTPException:
     )
 
 
+def _auth_required() -> bool:
+    return settings.api_auth_enabled or count_users() > 0
+
+
 def _parse_bearer_token(authorization: str | None) -> str:
     raw = (authorization or '').strip()
     if not raw.lower().startswith('bearer '):
@@ -142,7 +146,7 @@ def get_auth_context(authorization: str | None = Header(default=None)) -> AuthCo
             _, user = resolved
             return AuthContext(user=user, access_token=token, uses_legacy_api_token=False)
 
-    if count_users() == 0 and not settings.api_auth_enabled:
+    if not _auth_required():
         raise HTTPException(
             status_code=401,
             detail='Ainda nao existe nenhuma conta. Regista-te primeiro.',
@@ -205,7 +209,7 @@ async def request_logging_middleware(request: Request, call_next):
 def healthcheck():
     return {
         'status': 'ok',
-        'auth_enabled': settings.api_auth_enabled,
+        'auth_enabled': _auth_required(),
         'user_count': count_users(),
         'email_enabled': is_email_enabled(),
     }
