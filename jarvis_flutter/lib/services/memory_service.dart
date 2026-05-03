@@ -5,16 +5,31 @@ import 'api_service.dart';
 import 'log_service.dart';
 
 class MemoryService extends ChangeNotifier {
-  static final MemoryService _instance = MemoryService._internal();
+  static final MemoryService _instance = MemoryService._internal(
+    api: ApiService(),
+    logService: LogService(),
+  );
 
   factory MemoryService() {
     return _instance;
   }
 
-  MemoryService._internal();
+  MemoryService._internal({
+    required ApiService api,
+    required LogService logService,
+  }) : _api = api,
+       _logService = logService;
 
-  final ApiService _api = ApiService();
-  final LogService _logService = LogService();
+  @visibleForTesting
+  factory MemoryService.test({ApiService? api, LogService? logService}) {
+    return MemoryService._internal(
+      api: api ?? ApiService(),
+      logService: logService ?? LogService(),
+    );
+  }
+
+  final ApiService _api;
+  final LogService _logService;
   final List<MemoryEntry> _entries = [];
 
   bool _loading = false;
@@ -42,7 +57,10 @@ class MemoryService extends ChangeNotifier {
         ..clear()
         ..addAll(items);
       _loadedOnce = true;
-      _logService.addLog('INFO', 'Memoria sincronizada: ${items.length} registos.');
+      _logService.addLog(
+        'INFO',
+        'Memoria sincronizada: ${items.length} registos.',
+      );
     } catch (error) {
       _error = _normalizeError(error);
       _logService.addLog('ERROR', 'Falha ao carregar memoria: $_error');

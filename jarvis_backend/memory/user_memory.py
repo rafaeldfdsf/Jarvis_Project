@@ -104,6 +104,17 @@ def _memory_index_from_key(key):
     return None
 
 
+def _sort_memory_keys(keys: list[str]) -> list[str]:
+    return sorted(
+        keys,
+        key=lambda key: (
+            _memory_index_from_key(key) is None,
+            _memory_index_from_key(key) or 0,
+            key.lower(),
+        ),
+    )
+
+
 def _memory_label_from_key(key):
     if key == "name":
         return "Nome"
@@ -230,10 +241,10 @@ def delete_preference(index, user_id: str | None = None):
     c = conn.cursor()
     where_sql, params = _user_filter_sql(user_id)
     c.execute(
-        f"SELECT key FROM user_memory WHERE {where_sql} AND key LIKE 'preference_%' ORDER BY key",
+        f"SELECT key FROM user_memory WHERE {where_sql} AND key LIKE 'preference_%'",
         params,
     )
-    keys = [row["key"] for row in c.fetchall()]
+    keys = _sort_memory_keys([row["key"] for row in c.fetchall()])
     if 1 <= index <= len(keys):
         key_to_delete = keys[index - 1]
         c.execute(
@@ -253,10 +264,10 @@ def delete_reminder(index, user_id: str | None = None):
     c = conn.cursor()
     where_sql, params = _user_filter_sql(user_id)
     c.execute(
-        f"SELECT key FROM user_memory WHERE {where_sql} AND key LIKE 'reminder_%' ORDER BY key",
+        f"SELECT key FROM user_memory WHERE {where_sql} AND key LIKE 'reminder_%'",
         params,
     )
-    keys = [row["key"] for row in c.fetchall()]
+    keys = _sort_memory_keys([row["key"] for row in c.fetchall()])
     if 1 <= index <= len(keys):
         key_to_delete = keys[index - 1]
         c.execute(
@@ -284,7 +295,17 @@ def load_facts(user_id: str | None = None):
     preferences = []
     reminders = []
 
-    for key, value in [(row["key"], row["value"]) for row in rows]:
+    ordered_rows = sorted(
+        ((row["key"], row["value"]) for row in rows),
+        key=lambda item: (
+            _memory_type_from_key(item[0]),
+            _memory_index_from_key(item[0]) is None,
+            _memory_index_from_key(item[0]) or 0,
+            item[0].lower(),
+        ),
+    )
+
+    for key, value in ordered_rows:
         if key.startswith("preference_"):
             preferences.append(value)
         elif key.startswith("reminder_"):
@@ -292,7 +313,8 @@ def load_facts(user_id: str | None = None):
         else:
             facts[key] = value
 
-    facts.update(load_settings_values(user_id=user_id))
+    for key, value in load_settings_values(user_id=user_id).items():
+        facts.setdefault(key, value)
     facts["preferences"] = preferences
     facts["reminders"] = reminders
 

@@ -5,15 +5,22 @@ import 'api_service.dart';
 import 'log_service.dart';
 
 class RoutineService extends ChangeNotifier {
-  static final RoutineService _instance = RoutineService._internal();
+  static final RoutineService _instance = RoutineService._internal(
+    api: ApiService(),
+  );
 
   factory RoutineService() {
     return _instance;
   }
 
-  RoutineService._internal();
+  RoutineService._internal({required ApiService api}) : _api = api;
 
-  final ApiService _api = ApiService();
+  @visibleForTesting
+  factory RoutineService.test({ApiService? api}) {
+    return RoutineService._internal(api: api ?? ApiService());
+  }
+
+  final ApiService _api;
   final LogService _logService = LogService();
   final List<Routine> _routines = [];
 
@@ -129,7 +136,22 @@ class RoutineService extends ChangeNotifier {
       final result = await _api.runRoutine(routineId);
       final steps = result['results'];
       final total = steps is List ? steps.length : 0;
-      _logService.addLog('INFO', 'Rotina executada: $routineId ($total passos).');
+      final failed = steps is List
+          ? steps.where((step) => step is Map && step['ok'] == false).length
+          : 0;
+      _logService.addLog(
+        'INFO',
+        'Rotina executada: $routineId ($total passos).',
+      );
+      if (failed > 0) {
+        _error =
+            'A rotina terminou com $failed falha${failed == 1 ? '' : 's'}.';
+        _logService.addLog(
+          'ERROR',
+          'Rotina com falhas: $routineId ($failed/$total).',
+        );
+        return _error;
+      }
       return total == 0
           ? 'Rotina executada sem passos.'
           : 'Rotina executada com $total passo${total == 1 ? '' : 's'}.';

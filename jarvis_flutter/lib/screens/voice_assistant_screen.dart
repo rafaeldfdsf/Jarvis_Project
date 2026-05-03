@@ -24,10 +24,12 @@ class VoiceAssistantScreen extends StatefulWidget {
     super.key,
     this.embedded = false,
     this.overlayOnly = false,
+    this.autoInitialize = true,
   });
 
   final bool embedded;
   final bool overlayOnly;
+  final bool autoInitialize;
 
   @override
   State<VoiceAssistantScreen> createState() => _VoiceAssistantScreenState();
@@ -53,6 +55,10 @@ class _VoiceAssistantScreenState extends State<VoiceAssistantScreen> {
   String _lastWakeWordPhrase = AppSettingsService.defaultAssistantName;
   String _lastHeardTranscript = '';
   int _lastVoiceCaptureToken = 0;
+  Timer? _overlayDismissTimer;
+
+  static const Duration _overlayResponseDismissDelay = Duration(seconds: 4);
+  static const Duration _overlayIdleDismissDelay = Duration(seconds: 8);
 
   static const Set<String> _continuousStopPhrases = <String>{
     'parar escuta',
@@ -120,7 +126,11 @@ class _VoiceAssistantScreenState extends State<VoiceAssistantScreen> {
     settings.addListener(_handleSettingsChanged);
     runtime.addListener(_handleRuntimeChanged);
     shellService.addListener(_handleShellEvents);
-    _init();
+    if (widget.autoInitialize) {
+      _init();
+    } else {
+      statusText = _idleStatusText;
+    }
   }
 
   Future<void> _init() async {
@@ -211,6 +221,8 @@ class _VoiceAssistantScreenState extends State<VoiceAssistantScreen> {
       return;
     }
 
+    _cancelOverlayDismiss();
+
     setState(() {
       isListening = true;
       assistantState = AssistantState.listening;
@@ -229,6 +241,8 @@ class _VoiceAssistantScreenState extends State<VoiceAssistantScreen> {
     final capture = await voiceService.captureSpeechTurn(
       maxInitialWait: isFollowUp
           ? const Duration(seconds: 8)
+          : widget.overlayOnly
+          ? const Duration(seconds: 7)
           : const Duration(seconds: 4),
       inputDeviceId: settings.microphoneDeviceId,
       onSpeechStart: () {
@@ -260,7 +274,7 @@ class _VoiceAssistantScreenState extends State<VoiceAssistantScreen> {
       });
       await runtime.endVoiceCaptureSession();
       if (widget.overlayOnly) {
-        shellService.requestVoiceOverlayDismiss();
+        _scheduleOverlayDismiss(delay: _overlayIdleDismissDelay);
       }
       return;
     }
@@ -326,9 +340,27 @@ class _VoiceAssistantScreenState extends State<VoiceAssistantScreen> {
       }
     }
     if (widget.overlayOnly) {
-      await Future<void>.delayed(const Duration(milliseconds: 650));
-      shellService.requestVoiceOverlayDismiss();
+      _scheduleOverlayDismiss(delay: _overlayResponseDismissDelay);
     }
+  }
+
+  void _cancelOverlayDismiss() {
+    _overlayDismissTimer?.cancel();
+    _overlayDismissTimer = null;
+  }
+
+  void _scheduleOverlayDismiss({required Duration delay}) {
+    if (!widget.overlayOnly) {
+      return;
+    }
+
+    _overlayDismissTimer?.cancel();
+    _overlayDismissTimer = Timer(delay, () {
+      if (!mounted || isListening || isBusy) {
+        return;
+      }
+      shellService.requestVoiceOverlayDismiss();
+    });
   }
 
   Future<bool> _handleContinuousStopCommand(
@@ -537,6 +569,7 @@ class _VoiceAssistantScreenState extends State<VoiceAssistantScreen> {
 
   @override
   void dispose() {
+    _cancelOverlayDismiss();
     settings.removeListener(_handleSettingsChanged);
     runtime.removeListener(_handleRuntimeChanged);
     shellService.removeListener(_handleShellEvents);
@@ -590,6 +623,21 @@ class _VoiceAssistantScreenState extends State<VoiceAssistantScreen> {
                 mainAxisAlignment: MainAxisAlignment.center,
                 mainAxisSize: MainAxisSize.min,
                 children: [
+                  if (isOverlayOnly)
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: IconButton(
+                        onPressed: () {
+                          _cancelOverlayDismiss();
+                          shellService.requestVoiceOverlayDismiss();
+                        },
+                        tooltip: 'Fechar',
+                        icon: const Icon(
+                          Icons.close_rounded,
+                          color: Colors.white70,
+                        ),
+                      ),
+                    ),
                   JarvisOrb(
                     state: assistantState,
                     assistantName: _assistantName,

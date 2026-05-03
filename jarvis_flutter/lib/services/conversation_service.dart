@@ -5,15 +5,22 @@ import '../models/chat_response.dart';
 import 'api_service.dart';
 
 class ConversationService extends ChangeNotifier {
-  static final ConversationService _instance = ConversationService._internal();
+  static final ConversationService _instance = ConversationService._internal(
+    api: ApiService(),
+  );
 
   factory ConversationService() {
     return _instance;
   }
 
-  ConversationService._internal();
+  ConversationService._internal({required ApiService api}) : _api = api;
 
-  final ApiService _api = ApiService();
+  @visibleForTesting
+  factory ConversationService.test({ApiService? api}) {
+    return ConversationService._internal(api: api ?? ApiService());
+  }
+
+  final ApiService _api;
 
   final List<ChatMessage> _messages = <ChatMessage>[];
   Future<String>? _pendingSession;
@@ -55,12 +62,10 @@ class ConversationService extends ChangeNotifier {
     notifyListeners();
 
     try {
-      final ready = await ensureSession();
-      if (!ready || (_sessionId ?? '').trim().isEmpty) {
+      final response = await _sendTextWithRecovery(cleanText);
+      if (response == null) {
         return _appendErrorResponse('Nao foi possivel criar a sessao.');
       }
-
-      final response = await _api.sendMessage(_sessionId!, cleanText);
       _appendAssistantReply(response.reply);
       return response;
     } catch (error) {
@@ -74,17 +79,14 @@ class ConversationService extends ChangeNotifier {
     String? locale,
   }) async {
     try {
-      final ready = await ensureSession();
-      if (!ready || (_sessionId ?? '').trim().isEmpty) {
-        return _appendErrorResponse('Nao foi possivel criar a sessao.');
-      }
-
-      final response = await _api.sendVoiceTurn(
-        _sessionId!,
+      final response = await _sendVoiceWithRecovery(
         wavBytes,
         platform: platform,
         locale: locale,
       );
+      if (response == null) {
+        return _appendErrorResponse('Nao foi possivel criar a sessao.');
+      }
 
       final transcript = response.transcript.trim();
       if (transcript.isNotEmpty) {
@@ -96,6 +98,61 @@ class ConversationService extends ChangeNotifier {
     } catch (error) {
       return _appendErrorResponse(_formatError(error));
     }
+  }
+
+  Future<ChatResponseModel?> _sendTextWithRecovery(String cleanText) async {
+    final response = await _sendTextOnce(cleanText);
+    if (!_isUnknownSessionReply(response?.reply)) {
+      return response;
+    }
+
+    _invalidateSession();
+    return _sendTextOnce(cleanText);
+  }
+
+  Future<ChatResponseModel?> _sendTextOnce(String cleanText) async {
+    final ready = await ensureSession();
+    if (!ready || (_sessionId ?? '').trim().isEmpty) {
+      return null;
+    }
+
+    return _api.sendMessage(_sessionId!, cleanText);
+  }
+
+  Future<ChatResponseModel?> _sendVoiceWithRecovery(
+    Uint8List wavBytes, {
+    String? platform,
+    String? locale,
+  }) async {
+    final response = await _sendVoiceOnce(
+      wavBytes,
+      platform: platform,
+      locale: locale,
+    );
+    if (!_isUnknownSessionReply(response?.reply)) {
+      return response;
+    }
+
+    _invalidateSession();
+    return _sendVoiceOnce(wavBytes, platform: platform, locale: locale);
+  }
+
+  Future<ChatResponseModel?> _sendVoiceOnce(
+    Uint8List wavBytes, {
+    String? platform,
+    String? locale,
+  }) async {
+    final ready = await ensureSession();
+    if (!ready || (_sessionId ?? '').trim().isEmpty) {
+      return null;
+    }
+
+    return _api.sendVoiceTurn(
+      _sessionId!,
+      wavBytes,
+      platform: platform,
+      locale: locale,
+    );
   }
 
   void resetForAccountSwitch() {
@@ -118,6 +175,12 @@ class ConversationService extends ChangeNotifier {
     if (cleanAssistantReply.isNotEmpty) {
       _messages.add(ChatMessage(cleanAssistantReply, false));
     }
+    notifyListeners();
+  }
+
+  void _invalidateSession() {
+    _sessionId = null;
+    _pendingSession = null;
     notifyListeners();
   }
 
@@ -145,5 +208,10 @@ class ConversationService extends ChangeNotifier {
       return text.substring('Exception: '.length);
     }
     return text;
+  }
+
+  bool _isUnknownSessionReply(String? reply) {
+    final normalized = (reply ?? '').trim().toLowerCase();
+    return normalized.contains('sessao desconhecida');
   }
 }

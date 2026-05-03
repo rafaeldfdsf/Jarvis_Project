@@ -143,7 +143,7 @@ def extract_youtube_query(msg: str) -> str | None:
 
     query = match.group(1).strip()
     query = re.sub(
-        r"^(?:uma|um|a|o)\s+(?:musica|video)\s*(?:dos|das|do|da|de)?\s*",
+        r"^(?:(?:uma|um|a|o)\s+)?(?:musica|video)\s*(?:dos|das|do|da|de)?\s*",
         "",
         query,
     ).strip()
