@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -12,12 +13,11 @@ import '../services/assistant_runtime_service.dart';
 import '../services/api_service.dart';
 import '../services/app_settings_service.dart';
 import '../services/app_shell_service.dart';
+import '../services/conversation_service.dart';
 import '../services/memory_service.dart';
 import '../services/tts_service.dart';
 import '../services/voice_service.dart';
-import '../widgets/hud_background.dart';
 import '../widgets/jarvis_orb.dart';
-import '../widgets/particles.dart';
 
 class VoiceAssistantScreen extends StatefulWidget {
   const VoiceAssistantScreen({
@@ -38,20 +38,35 @@ class _VoiceAssistantScreenState extends State<VoiceAssistantScreen> {
   final AssistantRuntimeService runtime = AssistantRuntimeService();
   final AppSettingsService settings = AppSettingsService();
   final AppShellService shellService = AppShellService();
+  final ConversationService conversation = ConversationService();
   final VoiceService voiceService = VoiceService();
   final TtsService ttsService = TtsService();
   final ActivityHistoryService activityHistory = ActivityHistoryService();
 
   AssistantState assistantState = AssistantState.idle;
   String statusText = 'A iniciar...';
-  String? sessionId;
 
   bool isBusy = false;
   bool isListening = false;
+  bool _continuousConversationEnabled = false;
   bool _showTranscriptInspector = false;
   String _lastWakeWordPhrase = AppSettingsService.defaultAssistantName;
   String _lastHeardTranscript = '';
   int _lastVoiceCaptureToken = 0;
+
+  static const Set<String> _continuousStopPhrases = <String>{
+    'parar escuta',
+    'para escuta',
+    'parar conversa',
+    'terminar conversa',
+    'desligar conversa continua',
+    'desliga conversa continua',
+    'parar de ouvir',
+    'deixa de ouvir',
+    'podes parar',
+    'pode parar',
+    'ja podes parar',
+  };
 
   String get _assistantName => settings.assistantName;
   String get _wakeWordPhrase => settings.wakeWordPhrase;
@@ -108,43 +123,11 @@ class _VoiceAssistantScreenState extends State<VoiceAssistantScreen> {
     _init();
   }
 
-  String _formatError(Object error) {
-    final text = error.toString();
-    return text.startsWith('Exception: ')
-        ? text.substring('Exception: '.length)
-        : text;
-  }
-
-  Future<bool> _ensureSession() async {
-    if (sessionId != null) {
-      return true;
-    }
-
-    try {
-      sessionId = await api.createSession();
-      return true;
-    } catch (error) {
-      if (!mounted) {
-        return false;
-      }
-
-      setState(() {
-        assistantState = AssistantState.idle;
-        statusText = _formatError(error);
-        isBusy = false;
-        isListening = false;
-      });
-      return false;
-    }
-  }
-
   Future<void> _init() async {
     await settings.load();
     await runtime.initialize();
     _lastWakeWordPhrase = _wakeWordPhrase;
-    if (!await _ensureSession()) {
-      return;
-    }
+    await conversation.ensureSession();
     await ttsService.init();
 
     if (mounted) {
@@ -222,6 +205,7 @@ class _VoiceAssistantScreenState extends State<VoiceAssistantScreen> {
 
   Future<void> _startListening({
     bool triggeredByWakeWord = false,
+    bool isFollowUp = false,
   }) async {
     if (!mounted || isBusy || isListening) {
       return;
@@ -230,18 +214,22 @@ class _VoiceAssistantScreenState extends State<VoiceAssistantScreen> {
     setState(() {
       isListening = true;
       assistantState = AssistantState.listening;
-      statusText = triggeredByWakeWord
+      statusText = isFollowUp
+          ? 'Conversa continua ativa. Estou a ouvir...'
+          : triggeredByWakeWord
           ? 'Pode falar. Estou a ouvir...'
           : 'Estou a ouvir...';
     });
 
     unawaited(runtime.beginVoiceCaptureSession());
-    unawaited(_captureAndProcessSpeech());
+    unawaited(_captureAndProcessSpeech(isFollowUp: isFollowUp));
   }
 
-  Future<void> _captureAndProcessSpeech() async {
+  Future<void> _captureAndProcessSpeech({required bool isFollowUp}) async {
     final capture = await voiceService.captureSpeechTurn(
-      maxInitialWait: const Duration(seconds: 4),
+      maxInitialWait: isFollowUp
+          ? const Duration(seconds: 8)
+          : const Duration(seconds: 4),
       inputDeviceId: settings.microphoneDeviceId,
       onSpeechStart: () {
         if (!mounted || !isListening) {
@@ -265,7 +253,9 @@ class _VoiceAssistantScreenState extends State<VoiceAssistantScreen> {
     if (capture == null || !capture.hasAudio) {
       setState(() {
         assistantState = AssistantState.idle;
-        statusText = 'Nao percebi o que disseste.';
+        statusText = isFollowUp
+            ? 'Conversa continua em pausa. Toca para retomar.'
+            : 'Nao percebi o que disseste.';
         isBusy = false;
       });
       await runtime.endVoiceCaptureSession();
@@ -281,16 +271,16 @@ class _VoiceAssistantScreenState extends State<VoiceAssistantScreen> {
       statusText = 'A processar...';
     });
 
-    if (!await _ensureSession()) {
+    final stoppedLocally = await _handleContinuousStopCommand(
+      capture.wavBytes,
+      isFollowUp: isFollowUp,
+    );
+    if (stoppedLocally) {
       await runtime.endVoiceCaptureSession();
-      if (widget.overlayOnly) {
-        shellService.requestVoiceOverlayDismiss();
-      }
       return;
     }
 
-    final response = await api.sendVoiceTurn(
-      sessionId!,
+    final response = await conversation.sendVoiceTurn(
       capture.wavBytes,
       platform: Platform.operatingSystem,
       locale: Platform.localeName,
@@ -309,20 +299,128 @@ class _VoiceAssistantScreenState extends State<VoiceAssistantScreen> {
 
     unawaited(_runPostResponseTasks(response));
     await ttsService.speak(response.reply);
+    final shouldContinueConversation =
+        _continuousConversationEnabled &&
+        !widget.overlayOnly &&
+        transcript.isNotEmpty;
 
     if (mounted) {
       setState(() {
         assistantState = AssistantState.idle;
-        statusText = _idleStatusText;
+        statusText = shouldContinueConversation
+            ? 'A preparar o seguimento...'
+            : _idleStatusText;
         isBusy = false;
       });
     }
 
     await runtime.endVoiceCaptureSession();
+    if (shouldContinueConversation) {
+      await Future<void>.delayed(const Duration(milliseconds: 450));
+      if (mounted &&
+          _continuousConversationEnabled &&
+          !isBusy &&
+          !isListening) {
+        unawaited(_startListening(isFollowUp: true));
+        return;
+      }
+    }
     if (widget.overlayOnly) {
       await Future<void>.delayed(const Duration(milliseconds: 650));
       shellService.requestVoiceOverlayDismiss();
     }
+  }
+
+  Future<bool> _handleContinuousStopCommand(
+    List<int> wavBytes, {
+    required bool isFollowUp,
+  }) async {
+    if ((!_continuousConversationEnabled && !isFollowUp) ||
+        widget.overlayOnly) {
+      return false;
+    }
+
+    String transcript;
+    try {
+      transcript = (await api.transcribeAudio(
+        Uint8List.fromList(wavBytes),
+      )).trim();
+    } catch (_) {
+      return false;
+    }
+
+    if (!_isContinuousStopCommand(transcript)) {
+      return false;
+    }
+
+    conversation.appendLocalExchange(
+      userText: transcript,
+      assistantReply: 'Conversa continua desligada.',
+    );
+
+    if (mounted) {
+      setState(() {
+        _lastHeardTranscript = transcript;
+        _continuousConversationEnabled = false;
+        assistantState = AssistantState.idle;
+        statusText = 'Conversa continua desligada.';
+        isBusy = false;
+      });
+    }
+
+    await ttsService.speak('Conversa continua desligada.');
+    return true;
+  }
+
+  bool _isContinuousStopCommand(String transcript) {
+    final normalized = _normalizeCommandText(transcript);
+    if (normalized.isEmpty) {
+      return false;
+    }
+
+    for (final phrase in _continuousStopPhrases) {
+      if (normalized.contains(phrase)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  String _normalizeCommandText(String input) {
+    const replacements = <String, String>{
+      'á': 'a',
+      'à': 'a',
+      'ã': 'a',
+      'â': 'a',
+      'é': 'e',
+      'ê': 'e',
+      'í': 'i',
+      'ó': 'o',
+      'ô': 'o',
+      'õ': 'o',
+      'ú': 'u',
+      'ç': 'c',
+    };
+
+    var normalized = input.toLowerCase();
+    replacements.forEach((key, value) {
+      normalized = normalized.replaceAll(key, value);
+    });
+    normalized = normalized.replaceAll(RegExp(r'[^a-z0-9 ]'), ' ');
+    normalized = normalized.replaceAll(RegExp(r'\s+'), ' ').trim();
+    return normalized;
+  }
+
+  void _toggleContinuousConversation() {
+    setState(() {
+      _continuousConversationEnabled = !_continuousConversationEnabled;
+      if (!_continuousConversationEnabled &&
+          !isListening &&
+          !isBusy &&
+          assistantState == AssistantState.idle) {
+        statusText = _idleStatusText;
+      }
+    });
   }
 
   Future<void> _runPostResponseTasks(ChatResponseModel response) async {
@@ -354,13 +452,13 @@ class _VoiceAssistantScreenState extends State<VoiceAssistantScreen> {
           success: result.ok,
           detail: result.error,
           resolvedTarget:
-            result.url ??
-            result.app ??
-            action.arguments['app_name']?.toString() ??
-            action.arguments['url']?.toString() ??
-            action.arguments['query']?.toString() ??
-            action.arguments['window_title']?.toString() ??
-            action.action,
+              result.url ??
+              result.app ??
+              action.arguments['app_name']?.toString() ??
+              action.arguments['url']?.toString() ??
+              action.arguments['query']?.toString() ??
+              action.arguments['window_title']?.toString() ??
+              action.action,
         );
         return;
       }
@@ -381,7 +479,10 @@ class _VoiceAssistantScreenState extends State<VoiceAssistantScreen> {
       }
 
       if (action.type == 'open_url' && action.url != null) {
-        final result = await sendPcAction('open_url', extra: {'url': action.url});
+        final result = await sendPcAction(
+          'open_url',
+          extra: {'url': action.url},
+        );
         await activityHistory.recordClientAction(
           origin: 'voice',
           action: action,
@@ -449,7 +550,9 @@ class _VoiceAssistantScreenState extends State<VoiceAssistantScreen> {
     final isOverlayOnly = widget.overlayOnly;
     final orbSize = isOverlayOnly ? 210.0 : 260.0;
     final statusFontSize = isOverlayOnly ? 16.0 : 18.0;
-    final micSize = isOverlayOnly ? (isActive ? 82.0 : 70.0) : (isActive ? 90.0 : 76.0);
+    final micSize = isOverlayOnly
+        ? (isActive ? 82.0 : 70.0)
+        : (isActive ? 90.0 : 76.0);
     final micIconSize = isOverlayOnly ? 30.0 : 34.0;
     final topSpacing = isOverlayOnly ? 20.0 : 32.0;
     final middleSpacing = isOverlayOnly ? 28.0 : 40.0;
@@ -458,17 +561,7 @@ class _VoiceAssistantScreenState extends State<VoiceAssistantScreen> {
     return Stack(
       children: [
         if (!isOverlayOnly)
-          Container(
-            decoration: const BoxDecoration(
-              gradient: RadialGradient(
-                colors: [Color(0xFF0B1A2A), Color(0xFF050816)],
-                radius: 1.2,
-                center: Alignment(0, -0.8),
-              ),
-            ),
-          ),
-        if (!isOverlayOnly) const HudBackground(),
-        if (!isOverlayOnly) const ParticleField(),
+          const Positioned.fill(child: _VoiceAmbientBackground()),
         SafeArea(
           child: Center(
             child: Container(
@@ -504,7 +597,9 @@ class _VoiceAssistantScreenState extends State<VoiceAssistantScreen> {
                   ),
                   SizedBox(height: topSpacing),
                   Padding(
-                    padding: EdgeInsets.symmetric(horizontal: isOverlayOnly ? 8 : 24),
+                    padding: EdgeInsets.symmetric(
+                      horizontal: isOverlayOnly ? 8 : 24,
+                    ),
                     child: Text(
                       statusText,
                       textAlign: TextAlign.center,
@@ -525,12 +620,20 @@ class _VoiceAssistantScreenState extends State<VoiceAssistantScreen> {
                         shape: BoxShape.circle,
                         gradient: LinearGradient(
                           colors: isActive
-                              ? [const Color(0xFF00E5FF), const Color(0xFF00B0FF)]
-                              : [const Color(0xFF162033), const Color(0xFF0B1A2A)],
+                              ? [
+                                  const Color(0xFF00E5FF),
+                                  const Color(0xFF00B0FF),
+                                ]
+                              : [
+                                  const Color(0xFF162033),
+                                  const Color(0xFF0B1A2A),
+                                ],
                         ),
                         boxShadow: [
                           BoxShadow(
-                            color: const Color(0xFF00E5FF).withOpacity(isActive ? 0.6 : 0.2),
+                            color: const Color(
+                              0xFF00E5FF,
+                            ).withOpacity(isActive ? 0.6 : 0.2),
                             blurRadius: 30,
                             spreadRadius: 5,
                           ),
@@ -556,6 +659,24 @@ class _VoiceAssistantScreenState extends State<VoiceAssistantScreen> {
                       runSpacing: 10,
                       children: [
                         _DebugActionChip(
+                          icon: _continuousConversationEnabled
+                              ? Icons.hearing_rounded
+                              : Icons.hearing_disabled_rounded,
+                          label: _continuousConversationEnabled
+                              ? 'Conversa continua ligada'
+                              : 'Conversa continua desligada',
+                          onTap: _toggleContinuousConversation,
+                        ),
+                        _DebugActionChip(
+                          icon: wakeWordEnabled
+                              ? Icons.hearing_rounded
+                              : Icons.hearing_disabled_rounded,
+                          label: wakeWordEnabled
+                              ? 'Wake word ligada'
+                              : 'Wake word desligada',
+                          onTap: _toggleWakeWord,
+                        ),
+                        _DebugActionChip(
                           icon: _showTranscriptInspector
                               ? Icons.visibility_off_outlined
                               : Icons.subtitles_outlined,
@@ -564,7 +685,8 @@ class _VoiceAssistantScreenState extends State<VoiceAssistantScreen> {
                               : 'Mostrar transcricao',
                           onTap: () {
                             setState(() {
-                              _showTranscriptInspector = !_showTranscriptInspector;
+                              _showTranscriptInspector =
+                                  !_showTranscriptInspector;
                             });
                           },
                         ),
@@ -582,7 +704,10 @@ class _VoiceAssistantScreenState extends State<VoiceAssistantScreen> {
                     ),
                     const SizedBox(height: 16),
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 6,
+                      ),
                       decoration: BoxDecoration(
                         color: Colors.black.withOpacity(0.22),
                         borderRadius: BorderRadius.circular(999),
@@ -598,15 +723,6 @@ class _VoiceAssistantScreenState extends State<VoiceAssistantScreen> {
                           color: _wakeWordBadgeColor,
                           fontSize: 12,
                         ),
-                      ),
-                    ),
-                    const SizedBox(height: 24),
-                    Text(
-                      '${_assistantName.toUpperCase()} SYSTEM ONLINE',
-                      style: TextStyle(
-                        color: Colors.cyanAccent.withOpacity(0.4),
-                        fontSize: 11,
-                        letterSpacing: 2,
                       ),
                     ),
                   ],
@@ -638,7 +754,9 @@ class _VoiceAssistantScreenState extends State<VoiceAssistantScreen> {
                               color: const Color(0xF0101722),
                               borderRadius: BorderRadius.circular(20),
                               border: Border.all(
-                                color: const Color(0xFF42D9FF).withOpacity(0.22),
+                                color: const Color(
+                                  0xFF42D9FF,
+                                ).withOpacity(0.22),
                               ),
                               boxShadow: [
                                 BoxShadow(
@@ -675,6 +793,17 @@ class _VoiceAssistantScreenState extends State<VoiceAssistantScreen> {
                                     ),
                                   ),
                                 ),
+                                const SizedBox(height: 10),
+                                Text(
+                                  _continuousConversationEnabled
+                                      ? "Diz 'parar conversa' para sair da escuta continua."
+                                      : "Ativa a conversa continua para falar sem repetir a wake word.",
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(
+                                    color: Colors.white.withOpacity(0.56),
+                                    fontSize: 12,
+                                  ),
+                                ),
                               ],
                             ),
                           ),
@@ -687,77 +816,12 @@ class _VoiceAssistantScreenState extends State<VoiceAssistantScreen> {
     );
   }
 
-  Widget _buildWakeWordOverlay() {
-    final isReady = wakeWordEnabled && wakeWordReady;
-
-    return SafeArea(
-      child: Align(
-        alignment: Alignment.topRight,
-        child: Padding(
-          padding: const EdgeInsets.all(18),
-          child: Material(
-            color: Colors.transparent,
-            child: InkWell(
-              borderRadius: BorderRadius.circular(999),
-              onTap: _toggleWakeWord,
-              child: Ink(
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                decoration: BoxDecoration(
-                  color: Colors.black.withOpacity(0.24),
-                  borderRadius: BorderRadius.circular(999),
-                  border: Border.all(
-                    color: isReady
-                        ? Colors.cyanAccent.withOpacity(0.35)
-                        : Colors.white.withOpacity(0.12),
-                  ),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.18),
-                      blurRadius: 18,
-                      offset: const Offset(0, 8),
-                    ),
-                  ],
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      wakeWordEnabled ? Icons.hearing : Icons.hearing_disabled,
-                      color: isReady ? Colors.cyanAccent : Colors.white70,
-                      size: 18,
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      wakeWordEnabled
-                          ? "Wake word '$_wakeWordPhrase' ligada"
-                          : "Wake word '$_wakeWordPhrase' desligada",
-                      style: TextStyle(
-                        color: isReady ? Colors.cyanAccent : Colors.white70,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final content = _buildMainUI();
 
     if (widget.embedded) {
-      return Stack(
-        children: [
-          Positioned.fill(child: content),
-          if (Platform.isWindows && !widget.overlayOnly) _buildWakeWordOverlay(),
-        ],
-      );
+      return content;
     }
 
     return Scaffold(
@@ -769,19 +833,6 @@ class _VoiceAssistantScreenState extends State<VoiceAssistantScreen> {
         foregroundColor: Colors.white,
         centerTitle: true,
         title: const Text('Modo Voz'),
-        actions: [
-          if (Platform.isWindows)
-            IconButton(
-              tooltip: wakeWordEnabled ? 'Desligar wake word' : 'Ligar wake word',
-              onPressed: _toggleWakeWord,
-              icon: Icon(
-                wakeWordEnabled ? Icons.hearing : Icons.hearing_disabled,
-                color: wakeWordEnabled && wakeWordReady
-                    ? Colors.cyanAccent
-                    : Colors.white70,
-              ),
-            ),
-        ],
       ),
       body: content,
     );
@@ -832,6 +883,44 @@ class _DebugActionChip extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _VoiceAmbientBackground extends StatelessWidget {
+  const _VoiceAmbientBackground();
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        const DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: [Color(0xFF040812), Color(0xFF08111C), Color(0xFF050914)],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+          ),
+        ),
+        Align(
+          alignment: const Alignment(0, -0.25),
+          child: Container(
+            width: 520,
+            height: 520,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              gradient: RadialGradient(
+                colors: [
+                  const Color(0xFF31D6FF).withOpacity(0.18),
+                  Colors.transparent,
+                ],
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

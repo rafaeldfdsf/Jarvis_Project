@@ -1,8 +1,8 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:flutter/material.dart' hide MenuItem;
-import 'package:tray_manager/tray_manager.dart';
+import 'package:flutter/material.dart';
+import 'package:tray_manager/tray_manager.dart' as tray;
 import 'package:window_manager/window_manager.dart';
 
 import 'activity_history_screen.dart';
@@ -18,7 +18,16 @@ import 'settings_screen.dart';
 import 'system_logs_screen.dart';
 import 'voice_assistant_screen.dart';
 
-enum AppSection { voice, chat, devices, routines, memory, history, logs, settings }
+enum AppSection {
+  voice,
+  chat,
+  devices,
+  routines,
+  memory,
+  history,
+  logs,
+  settings,
+}
 
 class AppShell extends StatefulWidget {
   const AppShell({super.key});
@@ -27,7 +36,8 @@ class AppShell extends StatefulWidget {
   State<AppShell> createState() => _AppShellState();
 }
 
-class _AppShellState extends State<AppShell> with WindowListener, TrayListener {
+class _AppShellState extends State<AppShell>
+    with WindowListener, tray.TrayListener {
   final AuthService _auth = AuthService();
   final AssistantRuntimeService _runtime = AssistantRuntimeService();
   final AppSettingsService _settings = AppSettingsService();
@@ -38,6 +48,8 @@ class _AppShellState extends State<AppShell> with WindowListener, TrayListener {
   AppSection _selectedSection = AppSection.voice;
   bool _trayReady = false;
   bool _isQuitting = false;
+  bool _sidebarVisible = false;
+  bool _isFullscreen = false;
   int _lastWakePromptToken = 0;
   int _lastVoiceOverlayDismissToken = 0;
   Rect? _normalWindowBounds;
@@ -61,9 +73,9 @@ class _AppShellState extends State<AppShell> with WindowListener, TrayListener {
 
     if (_supportsDesktopRuntime) {
       windowManager.removeListener(this);
-      trayManager.removeListener(this);
+      tray.trayManager.removeListener(this);
       if (_trayReady) {
-        unawaited(trayManager.destroy());
+        unawaited(tray.trayManager.destroy());
       }
     }
 
@@ -112,9 +124,10 @@ class _AppShellState extends State<AppShell> with WindowListener, TrayListener {
     }
 
     windowManager.addListener(this);
-    trayManager.addListener(this);
+    tray.trayManager.addListener(this);
     await windowManager.setPreventClose(true);
     await _syncTray();
+    await _syncWindowState();
 
     if (mounted) {
       setState(() {
@@ -130,16 +143,18 @@ class _AppShellState extends State<AppShell> with WindowListener, TrayListener {
       return;
     }
 
-    await trayManager.setIcon(_trayIconPath());
-    await trayManager.setToolTip('${_settings.assistantName} em segundo plano');
-    await trayManager.setContextMenu(
-      Menu(
+    await tray.trayManager.setIcon(_trayIconPath());
+    await tray.trayManager.setToolTip(
+      '${_settings.assistantName} em segundo plano',
+    );
+    await tray.trayManager.setContextMenu(
+      tray.Menu(
         items: [
-          MenuItem(key: 'show_window', label: 'Abrir assistente'),
-          MenuItem(key: 'open_voice', label: 'Abrir modo voz'),
-          MenuItem(key: 'hide_window', label: 'Manter em segundo plano'),
-          MenuItem.separator(),
-          MenuItem(key: 'exit_app', label: 'Sair'),
+          tray.MenuItem(key: 'show_window', label: 'Abrir assistente'),
+          tray.MenuItem(key: 'open_voice', label: 'Abrir modo voz'),
+          tray.MenuItem(key: 'hide_window', label: 'Manter em segundo plano'),
+          tray.MenuItem.separator(),
+          tray.MenuItem(key: 'exit_app', label: 'Sair'),
         ],
       ),
     );
@@ -176,6 +191,7 @@ class _AppShellState extends State<AppShell> with WindowListener, TrayListener {
     }
 
     await windowManager.focus();
+    await _syncWindowState();
   }
 
   Future<void> _handleWakePromptWindowMode() async {
@@ -253,6 +269,45 @@ class _AppShellState extends State<AppShell> with WindowListener, TrayListener {
     }
   }
 
+  Future<void> _syncWindowState() async {
+    if (!_supportsDesktopRuntime) {
+      return;
+    }
+
+    final isFullscreen = await windowManager.isFullScreen();
+    if (!mounted) {
+      _isFullscreen = isFullscreen;
+      return;
+    }
+
+    setState(() {
+      _isFullscreen = isFullscreen;
+    });
+  }
+
+  Future<void> _toggleFullscreen() async {
+    if (!_supportsDesktopRuntime || _shellService.voiceOverlayMode) {
+      return;
+    }
+
+    final next = !_isFullscreen;
+    await windowManager.setFullScreen(next);
+    if (!mounted) {
+      _isFullscreen = next;
+      return;
+    }
+
+    setState(() {
+      _isFullscreen = next;
+    });
+  }
+
+  void _toggleSidebar() {
+    setState(() {
+      _sidebarVisible = !_sidebarVisible;
+    });
+  }
+
   Future<void> _prepareVoiceOverlayWindow({
     bool activateOverlayMode = false,
   }) async {
@@ -260,6 +315,10 @@ class _AppShellState extends State<AppShell> with WindowListener, TrayListener {
       return;
     }
 
+    if (_isFullscreen) {
+      await windowManager.setFullScreen(false);
+      _isFullscreen = false;
+    }
     _normalWindowBounds ??= await windowManager.getBounds();
     if (activateOverlayMode) {
       _shellService.enterVoiceOverlayMode();
@@ -282,7 +341,7 @@ class _AppShellState extends State<AppShell> with WindowListener, TrayListener {
     }
 
     _isQuitting = true;
-    await trayManager.destroy();
+    await tray.trayManager.destroy();
     _trayReady = false;
     await windowManager.setPreventClose(false);
     await windowManager.close();
@@ -304,11 +363,11 @@ class _AppShellState extends State<AppShell> with WindowListener, TrayListener {
 
   @override
   void onTrayIconRightMouseDown() {
-    trayManager.popUpContextMenu();
+    tray.trayManager.popUpContextMenu();
   }
 
   @override
-  void onTrayMenuItemClick(MenuItem menuItem) {
+  void onTrayMenuItemClick(tray.MenuItem menuItem) {
     switch (menuItem.key) {
       case 'show_window':
         unawaited(_restoreWindow());
@@ -340,6 +399,11 @@ class _AppShellState extends State<AppShell> with WindowListener, TrayListener {
         final selectedIndex = isVoiceOverlayMode
             ? AppSection.voice.index
             : _selectedSection.index;
+        final sectionTitle = _sectionTitle(_selectedSection);
+        final sectionSubtitle = _sectionSubtitle(
+          _selectedSection,
+          assistantName,
+        );
         final content = KeyedSubtree(
           key: _contentHostKey,
           child: IndexedStack(
@@ -362,10 +426,7 @@ class _AppShellState extends State<AppShell> with WindowListener, TrayListener {
         );
 
         if (isVoiceOverlayMode) {
-          return Scaffold(
-            backgroundColor: Colors.transparent,
-            body: content,
-          );
+          return Scaffold(backgroundColor: Colors.transparent, body: content);
         }
 
         return Scaffold(
@@ -373,12 +434,15 @@ class _AppShellState extends State<AppShell> with WindowListener, TrayListener {
           drawer: isWide
               ? null
               : Drawer(
+                  width: 340,
                   backgroundColor: Colors.transparent,
                   elevation: 0,
                   child: _DrawerMenu(
                     assistantName: assistantName,
                     accountName: accountName,
-                    onLogout: _auth.loading ? null : () => unawaited(_auth.logout()),
+                    onLogout: _auth.loading
+                        ? null
+                        : () => unawaited(_auth.logout()),
                     selectedSection: _selectedSection,
                     onSectionSelected: (section) {
                       Navigator.of(context).pop();
@@ -395,7 +459,7 @@ class _AppShellState extends State<AppShell> with WindowListener, TrayListener {
                       colors: [
                         Color(0xFF02060C),
                         Color(0xFF07111B),
-                        Color(0xFF02060C),
+                        Color(0xFF040916),
                       ],
                       begin: Alignment.topLeft,
                       end: Alignment.bottomRight,
@@ -406,36 +470,57 @@ class _AppShellState extends State<AppShell> with WindowListener, TrayListener {
               if (isWide)
                 SafeArea(
                   child: Padding(
-                    padding: const EdgeInsets.all(16),
+                    padding: const EdgeInsets.all(18),
                     child: Row(
                       children: [
-                        _SidebarMenu(
-                          assistantName: assistantName,
-                          accountName: accountName,
-                          onLogout: _auth.loading ? null : () => unawaited(_auth.logout()),
+                        _DesktopSidebarRail(
                           selectedSection: _selectedSection,
-                          onSectionSelected: _selectSection,
+                          sidebarVisible: _sidebarVisible,
+                          onMenuTap: _toggleSidebar,
+                          onSectionSelected: (section) {
+                            _selectSection(section);
+                          },
                         ),
                         const SizedBox(width: 18),
-                        Expanded(
-                          child: ClipRRect(
-                            borderRadius: BorderRadius.circular(30),
-                            child: DecoratedBox(
-                              decoration: BoxDecoration(
-                                borderRadius: BorderRadius.circular(30),
-                                border: Border.all(
-                                  color: const Color(0xFF17324C),
+                        AnimatedContainer(
+                          duration: const Duration(milliseconds: 260),
+                          curve: Curves.easeOutCubic,
+                          width: _sidebarVisible ? 312 : 0,
+                          child: ClipRect(
+                            child: AnimatedOpacity(
+                              duration: const Duration(milliseconds: 180),
+                              opacity: _sidebarVisible ? 1 : 0,
+                              child: IgnorePointer(
+                                ignoring: !_sidebarVisible,
+                                child: _SidebarMenu(
+                                  assistantName: assistantName,
+                                  accountName: accountName,
+                                  onLogout: _auth.loading
+                                      ? null
+                                      : () => unawaited(_auth.logout()),
+                                  selectedSection: _selectedSection,
+                                  onSectionSelected: (section) {
+                                    _selectSection(section);
+                                    setState(() {
+                                      _sidebarVisible = false;
+                                    });
+                                  },
                                 ),
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: Colors.black.withOpacity(0.22),
-                                    blurRadius: 28,
-                                    offset: const Offset(0, 12),
-                                  ),
-                                ],
                               ),
-                              child: content,
                             ),
+                          ),
+                        ),
+                        if (_sidebarVisible) const SizedBox(width: 18),
+                        Expanded(
+                          child: _WorkspaceFrame(
+                            title: sectionTitle,
+                            subtitle: sectionSubtitle,
+                            onMenuTap: _toggleSidebar,
+                            showMenuAction: false,
+                            showFullscreenAction: _supportsDesktopRuntime,
+                            isFullscreen: _isFullscreen,
+                            onFullscreenTap: _toggleFullscreen,
+                            child: content,
                           ),
                         ),
                       ],
@@ -443,39 +528,22 @@ class _AppShellState extends State<AppShell> with WindowListener, TrayListener {
                   ),
                 )
               else
-                Positioned.fill(child: content),
-              if (!isWide)
                 SafeArea(
                   child: Padding(
-                    padding: const EdgeInsets.all(14),
-                    child: Align(
-                      alignment: Alignment.topLeft,
-                      child: Builder(
-                        builder: (context) {
-                          return Material(
-                            color: Colors.transparent,
-                            child: InkWell(
-                              borderRadius: BorderRadius.circular(16),
-                              onTap: () => Scaffold.of(context).openDrawer(),
-                              child: Ink(
-                                width: 50,
-                                height: 50,
-                                decoration: BoxDecoration(
-                                  color: const Color(0xCC07111B),
-                                  borderRadius: BorderRadius.circular(16),
-                                  border: Border.all(
-                                    color: const Color(0xFF17324C),
-                                  ),
-                                ),
-                                child: const Icon(
-                                  Icons.menu_rounded,
-                                  color: Colors.white,
-                                ),
-                              ),
-                            ),
-                          );
-                        },
-                      ),
+                    padding: const EdgeInsets.all(12),
+                    child: Builder(
+                      builder: (context) {
+                        return _WorkspaceFrame(
+                          title: sectionTitle,
+                          subtitle: sectionSubtitle,
+                          onMenuTap: () => Scaffold.of(context).openDrawer(),
+                          showMenuAction: true,
+                          showFullscreenAction: false,
+                          isFullscreen: false,
+                          onFullscreenTap: null,
+                          child: content,
+                        );
+                      },
                     ),
                   ),
                 ),
@@ -523,12 +591,18 @@ class _SidebarMenu extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: 280,
       padding: const EdgeInsets.fromLTRB(20, 22, 20, 20),
       decoration: BoxDecoration(
-        color: const Color(0xCC06111B),
-        borderRadius: BorderRadius.circular(28),
-        border: Border.all(color: const Color(0xFF17324C)),
+        color: const Color(0xCC08121D),
+        borderRadius: BorderRadius.circular(32),
+        border: Border.all(color: const Color(0xFF183753)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.18),
+            blurRadius: 28,
+            offset: const Offset(0, 16),
+          ),
+        ],
       ),
       child: Scrollbar(
         child: SingleChildScrollView(
@@ -540,7 +614,7 @@ class _SidebarMenu extends StatelessWidget {
                 accountName: accountName,
                 onLogout: onLogout,
               ),
-              const SizedBox(height: 28),
+              const SizedBox(height: 24),
               Text(
                 'NAVEGACAO',
                 style: TextStyle(
@@ -566,9 +640,9 @@ class _SidebarMenu extends StatelessWidget {
                 width: double.infinity,
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
-                  color: const Color(0xFF081A2A),
-                  borderRadius: BorderRadius.circular(22),
-                  border: Border.all(color: const Color(0xFF163750)),
+                  color: Colors.white.withOpacity(0.03),
+                  borderRadius: BorderRadius.circular(24),
+                  border: Border.all(color: Colors.white.withOpacity(0.08)),
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -583,10 +657,7 @@ class _SidebarMenu extends StatelessWidget {
                     const SizedBox(height: 8),
                     Text(
                       'O modo voz abre primeiro e o chat, os dispositivos, as rotinas, a memoria, o historico, os logs e as configuracoes ficam sempre disponiveis no menu lateral.',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        height: 1.45,
-                      ),
+                      style: const TextStyle(color: Colors.white, height: 1.45),
                     ),
                   ],
                 ),
@@ -619,7 +690,7 @@ class _DrawerMenu extends StatelessWidget {
     return Container(
       decoration: const BoxDecoration(
         gradient: LinearGradient(
-          colors: [Color(0xFF06111B), Color(0xFF02060C)],
+          colors: [Color(0xFF07111B), Color(0xFF02060C)],
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
         ),
@@ -679,12 +750,12 @@ class _BrandPanel extends StatelessWidget {
       padding: EdgeInsets.all(compact ? 16 : 18),
       decoration: BoxDecoration(
         gradient: const LinearGradient(
-          colors: [Color(0xFF0A1D30), Color(0xFF08121D)],
+          colors: [Color(0xFF11243A), Color(0xFF09121D)],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: const Color(0xFF17324C)),
+        borderRadius: BorderRadius.circular(26),
+        border: Border.all(color: const Color(0xFF1D3C59)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -768,7 +839,7 @@ class _NavButton extends StatelessWidget {
           padding: const EdgeInsets.all(14),
           decoration: BoxDecoration(
             color: selected
-                ? const Color(0xFF0D263D)
+                ? const Color(0xFF102B42)
                 : Colors.white.withOpacity(0.03),
             borderRadius: BorderRadius.circular(22),
             border: Border.all(
@@ -825,6 +896,365 @@ class _NavButton extends StatelessWidget {
   }
 }
 
+class _DesktopSidebarRail extends StatelessWidget {
+  const _DesktopSidebarRail({
+    required this.selectedSection,
+    required this.sidebarVisible,
+    required this.onMenuTap,
+    required this.onSectionSelected,
+  });
+
+  final AppSection selectedSection;
+  final bool sidebarVisible;
+  final VoidCallback onMenuTap;
+  final ValueChanged<AppSection> onSectionSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 86,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 16),
+      decoration: BoxDecoration(
+        color: const Color(0xB308121D),
+        borderRadius: BorderRadius.circular(30),
+        border: Border.all(color: const Color(0xFF183753)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.18),
+            blurRadius: 24,
+            offset: const Offset(0, 14),
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          _RailIconButton(
+            icon: sidebarVisible ? Icons.close_rounded : Icons.menu_rounded,
+            tooltip: sidebarVisible ? 'Fechar menu' : 'Abrir menu',
+            selected: sidebarVisible,
+            onTap: onMenuTap,
+          ),
+          const SizedBox(height: 18),
+          Expanded(
+            child: Column(
+              children: [
+                for (final section in AppSection.values) ...[
+                  _RailIconButton(
+                    icon: _sectionIcon(section),
+                    tooltip: _sectionTitle(section),
+                    selected: selectedSection == section,
+                    onTap: () => onSectionSelected(section),
+                  ),
+                  const SizedBox(height: 10),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _RailIconButton extends StatelessWidget {
+  const _RailIconButton({
+    required this.icon,
+    required this.tooltip,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String tooltip;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: tooltip,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(20),
+          onTap: onTap,
+          child: Ink(
+            width: 52,
+            height: 52,
+            decoration: BoxDecoration(
+              color: selected
+                  ? const Color(0xFF102B42)
+                  : Colors.white.withOpacity(0.03),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(
+                color: selected
+                    ? const Color(0xFF42D9FF)
+                    : Colors.white.withOpacity(0.08),
+              ),
+            ),
+            child: Icon(
+              icon,
+              color: selected ? const Color(0xFF42D9FF) : Colors.white70,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _WorkspaceFrame extends StatelessWidget {
+  const _WorkspaceFrame({
+    required this.title,
+    required this.subtitle,
+    required this.onMenuTap,
+    required this.showMenuAction,
+    required this.showFullscreenAction,
+    required this.isFullscreen,
+    required this.onFullscreenTap,
+    required this.child,
+  });
+
+  final String title;
+  final String subtitle;
+  final VoidCallback onMenuTap;
+  final bool showMenuAction;
+  final bool showFullscreenAction;
+  final bool isFullscreen;
+  final VoidCallback? onFullscreenTap;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(34),
+        border: Border.all(color: const Color(0xFF17324C)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.22),
+            blurRadius: 28,
+            offset: const Offset(0, 12),
+          ),
+        ],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(1),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(33),
+          child: DecoratedBox(
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(
+                colors: [Color(0xE709111B), Color(0xF4060B13)],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+            ),
+            child: Column(
+              children: [
+                _ShellTopBar(
+                  title: title,
+                  subtitle: subtitle,
+                  onMenuTap: onMenuTap,
+                  showMenuAction: showMenuAction,
+                  showFullscreenAction: showFullscreenAction,
+                  isFullscreen: isFullscreen,
+                  onFullscreenTap: onFullscreenTap,
+                ),
+                Expanded(
+                  child: ClipRRect(
+                    borderRadius: const BorderRadius.vertical(
+                      bottom: Radius.circular(28),
+                    ),
+                    child: child,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ShellTopBar extends StatelessWidget {
+  const _ShellTopBar({
+    required this.title,
+    required this.subtitle,
+    required this.onMenuTap,
+    required this.showMenuAction,
+    required this.showFullscreenAction,
+    required this.isFullscreen,
+    required this.onFullscreenTap,
+  });
+
+  final String title;
+  final String subtitle;
+  final VoidCallback onMenuTap;
+  final bool showMenuAction;
+  final bool showFullscreenAction;
+  final bool isFullscreen;
+  final VoidCallback? onFullscreenTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+      child: Row(
+        children: [
+          if (showMenuAction) ...[
+            _TopBarActionButton(
+              icon: Icons.menu_rounded,
+              tooltip: 'Abrir navegacao',
+              onTap: onMenuTap,
+            ),
+            const SizedBox(width: 14),
+          ],
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 20,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  subtitle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.62),
+                    fontSize: 13,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const _ClockChip(),
+          if (showFullscreenAction) ...[
+            const SizedBox(width: 10),
+            _TopBarActionButton(
+              icon: isFullscreen
+                  ? Icons.fullscreen_exit_rounded
+                  : Icons.fullscreen_rounded,
+              tooltip: isFullscreen ? 'Sair de ecrã inteiro' : 'Ecrã inteiro',
+              onTap: onFullscreenTap,
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _ClockChip extends StatefulWidget {
+  const _ClockChip();
+
+  @override
+  State<_ClockChip> createState() => _ClockChipState();
+}
+
+class _ClockChipState extends State<_ClockChip> {
+  late final Timer _timer;
+  DateTime _now = DateTime.now();
+
+  @override
+  void initState() {
+    super.initState();
+    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _now = DateTime.now();
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer.cancel();
+    super.dispose();
+  }
+
+  String get _formattedTime {
+    final hour = _now.hour.toString().padLeft(2, '0');
+    final minute = _now.minute.toString().padLeft(2, '0');
+    return '$hour:$minute';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.04),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: Colors.white.withOpacity(0.08)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.schedule_rounded, color: Colors.white70, size: 16),
+          const SizedBox(width: 8),
+          Text(
+            _formattedTime,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.8,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TopBarActionButton extends StatelessWidget {
+  const _TopBarActionButton({
+    required this.icon,
+    required this.tooltip,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: tooltip,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(18),
+          onTap: onTap,
+          child: Ink(
+            width: 48,
+            height: 48,
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.04),
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(color: Colors.white.withOpacity(0.08)),
+            ),
+            child: Icon(icon, color: Colors.white),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _WakePromptBanner extends StatelessWidget {
   const _WakePromptBanner({required this.message});
 
@@ -850,10 +1280,7 @@ class _WakePromptBanner extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(
-              Icons.mic_none_rounded,
-              color: Color(0xFF42D9FF),
-            ),
+            const Icon(Icons.mic_none_rounded, color: Color(0xFF42D9FF)),
             const SizedBox(width: 12),
             Flexible(
               child: Text(

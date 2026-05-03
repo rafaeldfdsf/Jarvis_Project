@@ -68,7 +68,7 @@ class _JarvisOrbState extends State<JarvisOrb> with TickerProviderStateMixin {
       case AssistantState.listening:
         return const Color(0xFF00E5FF);
       case AssistantState.thinking:
-        return const Color(0xFF7C4DFF);
+        return const Color(0xFF79E7D3);
       case AssistantState.speaking:
         return const Color(0xFF00B0FF);
     }

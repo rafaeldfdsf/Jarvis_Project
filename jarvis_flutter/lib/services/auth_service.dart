@@ -11,6 +11,7 @@ import 'api_service.dart';
 import 'app_shell_service.dart';
 import 'app_settings_service.dart';
 import 'assistant_runtime_service.dart';
+import 'conversation_service.dart';
 import 'home_assistant_devices_service.dart';
 import 'memory_service.dart';
 import 'routine_service.dart';
@@ -91,10 +92,7 @@ class AuthService extends ChangeNotifier {
     }
   }
 
-  Future<bool> login({
-    required String email,
-    required String password,
-  }) async {
+  Future<bool> login({required String email, required String password}) async {
     _loading = true;
     _error = null;
     _notice = null;
@@ -199,9 +197,7 @@ class AuthService extends ChangeNotifier {
     }
   }
 
-  Future<bool> resendVerification({
-    required String email,
-  }) async {
+  Future<bool> resendVerification({required String email}) async {
     _loading = true;
     _error = null;
     _notice = null;
@@ -222,9 +218,7 @@ class AuthService extends ChangeNotifier {
     }
   }
 
-  Future<bool> requestPasswordReset({
-    required String email,
-  }) async {
+  Future<bool> requestPasswordReset({required String email}) async {
     _loading = true;
     _error = null;
     _notice = null;
@@ -306,10 +300,7 @@ class AuthService extends ChangeNotifier {
     final file = await _sessionFile();
     await file.parent.create(recursive: true);
     await file.writeAsString(
-      jsonEncode({
-        'access_token': _accessToken,
-        'user': _user?.toJson(),
-      }),
+      jsonEncode({'access_token': _accessToken, 'user': _user?.toJson()}),
       flush: true,
     );
   }
@@ -337,6 +328,7 @@ class AuthService extends ChangeNotifier {
     RoutineService().resetForAccountSwitch();
     HomeAssistantDevicesService().resetForAccountSwitch();
     await ActivityHistoryService().resetForAccountSwitch();
+    ConversationService().resetForAccountSwitch();
     AppShellService().resetForAccountSwitch();
   }
 
