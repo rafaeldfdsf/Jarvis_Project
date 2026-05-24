@@ -36,12 +36,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
       TextEditingController();
   final TextEditingController _homeAssistantTokenController =
       TextEditingController();
+  final TextEditingController _ollamaUrlController = TextEditingController();
+  final TextEditingController _ollamaModelController = TextEditingController();
 
   bool _testingHomeAssistant = false;
   bool _loadingMicrophones = false;
   bool _testingMicrophone = false;
   bool _homeAssistantEnabled = false;
   double _wakeWordSensitivity = 40;
+  String _selectedLlmProvider = AppSettingsService.providerOllama;
+  String _selectedOpenAiModel = AppSettingsService.defaultOpenAiModel;
   HomeAssistantStatus? _homeAssistantStatus;
   List<MicrophoneDevice> _microphones = const <MicrophoneDevice>[];
   List<TtsVoiceOption> _ttsVoices = const <TtsVoiceOption>[];
@@ -78,6 +82,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _userNameController.text = _settings.userName;
     _wakeWordController.text = _settings.wakeWordPhrase;
     _wakeWordSensitivity = _settings.wakeWordSensitivity.toDouble();
+    _selectedLlmProvider = _settings.llmProvider;
+    _ollamaUrlController.text = _settings.ollamaUrl;
+    _ollamaModelController.text = _settings.ollamaModel;
+    _selectedOpenAiModel = _settings.openAiModel;
     _homeAssistantEnabled = _settings.homeAssistantEnabled;
     _homeAssistantUrlController.text = _settings.homeAssistantUrl;
     _homeAssistantTokenController.text = _settings.homeAssistantToken;
@@ -178,6 +186,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
       userName: _userNameController.text,
       wakeWordPhrase: _wakeWordController.text,
       wakeWordSensitivity: _wakeWordSensitivity.round(),
+      llmProvider: _selectedLlmProvider,
+      ollamaUrl: _ollamaUrlController.text,
+      ollamaModel: _ollamaModelController.text,
+      openAiModel: _selectedOpenAiModel,
       homeAssistantEnabled: _homeAssistantEnabled,
       homeAssistantUrl: _homeAssistantUrlController.text,
       homeAssistantToken: _homeAssistantTokenController.text,
@@ -231,6 +243,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
       userName: _userNameController.text,
       wakeWordPhrase: _wakeWordController.text,
       wakeWordSensitivity: _wakeWordSensitivity.round(),
+      llmProvider: _selectedLlmProvider,
+      ollamaUrl: _ollamaUrlController.text,
+      ollamaModel: _ollamaModelController.text,
+      openAiModel: _selectedOpenAiModel,
       homeAssistantEnabled: _homeAssistantEnabled,
       homeAssistantUrl: _homeAssistantUrlController.text,
       homeAssistantToken: _homeAssistantTokenController.text,
@@ -433,6 +449,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _wakeWordController.dispose();
     _homeAssistantUrlController.dispose();
     _homeAssistantTokenController.dispose();
+    _ollamaUrlController.dispose();
+    _ollamaModelController.dispose();
     _deviceRegistry.dispose();
     _voiceService.dispose();
     unawaited(_ttsService.stop());
@@ -513,6 +531,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           alignment: Alignment.centerLeft,
                           child: FilledButton.tonalIcon(
                             onPressed: _auth.loading ? null : _logout,
+                            style: _settingsTonalButtonStyle(),
                             icon: const Icon(Icons.logout_rounded),
                             label: Text(
                               _auth.loading
@@ -701,6 +720,38 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ),
                   const SizedBox(height: 16),
                   _SectionCard(
+                    title: 'LLM',
+                    subtitle:
+                        'Escolhe entre Ollama e OpenAI e guarda a configuracao de cada provedor.',
+                    child: _LlmSettingsCard(
+                      selectedProvider: _selectedLlmProvider,
+                      selectedOpenAiModel: _selectedOpenAiModel,
+                      saving: _settings.saving,
+                      ollamaUrlController: _ollamaUrlController,
+                      ollamaModelController: _ollamaModelController,
+                      onProviderChanged: (value) {
+                        setState(() {
+                          _selectedLlmProvider =
+                              value == AppSettingsService.providerOpenAi
+                              ? AppSettingsService.providerOpenAi
+                              : AppSettingsService.providerOllama;
+                        });
+                      },
+                      onOpenAiModelChanged: (value) {
+                        setState(() {
+                          _selectedOpenAiModel =
+                              value != null &&
+                                  AppSettingsService.openAiModelOptions.contains(
+                                    value,
+                                  )
+                              ? value
+                              : AppSettingsService.defaultOpenAiModel;
+                        });
+                      },
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  _SectionCard(
                     title: 'Dispositivos',
                     subtitle:
                         'Gere agentes ligados ao core e define quem ouve, responde e controla o computador.',
@@ -724,6 +775,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               onPressed: _deviceRegistry.loading
                                   ? null
                                   : _refreshDevices,
+                              style: _settingsTonalButtonStyle(),
                               icon: const Icon(Icons.sync_rounded),
                               label: const Text('Atualizar'),
                             ),
@@ -890,6 +942,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                     : (_homeAssistantEnabled
                                           ? _testHomeAssistant
                                           : _saveSettings),
+                                style: _settingsTonalButtonStyle(),
                                 icon: _testingHomeAssistant
                                     ? const SizedBox(
                                         width: 16,
@@ -1006,6 +1059,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
       },
     );
   }
+}
+
+ButtonStyle _settingsTonalButtonStyle() {
+  return FilledButton.styleFrom(
+    foregroundColor: Colors.white,
+    iconColor: Colors.white,
+    textStyle: const TextStyle(
+      fontWeight: FontWeight.w600,
+    ),
+  );
 }
 
 class _RegisteredDeviceCard extends StatelessWidget {
@@ -1483,6 +1546,7 @@ class _MicrophoneSelectorCard extends StatelessWidget {
             Expanded(
               child: FilledButton.tonalIcon(
                 onPressed: onRefresh == null ? null : () => unawaited(onRefresh!()),
+                style: _settingsTonalButtonStyle(),
                 icon: loading
                     ? const SizedBox(
                         width: 16,
@@ -1497,6 +1561,7 @@ class _MicrophoneSelectorCard extends StatelessWidget {
             Expanded(
               child: FilledButton.tonalIcon(
                 onPressed: onTest == null ? null : () => unawaited(onTest!()),
+                style: _settingsTonalButtonStyle(),
                 icon: testing
                     ? const SizedBox(
                         width: 16,
@@ -1655,6 +1720,7 @@ class _TtsVoiceSelectorCard extends StatelessWidget {
             Expanded(
               child: FilledButton.tonalIcon(
                 onPressed: onRefresh == null ? null : () => unawaited(onRefresh!()),
+                style: _settingsTonalButtonStyle(),
                 icon: loading
                     ? const SizedBox(
                         width: 16,
@@ -1675,6 +1741,7 @@ class _TtsVoiceSelectorCard extends StatelessWidget {
             Expanded(
               child: FilledButton.tonalIcon(
                 onPressed: onTest == null ? null : () => unawaited(onTest!()),
+                style: _settingsTonalButtonStyle(),
                 icon: testing
                     ? const SizedBox(
                         width: 16,
@@ -1708,6 +1775,190 @@ class _TtsVoiceSelectorCard extends StatelessWidget {
               style: TextStyle(
                 color: statusOk ? Colors.white : accent,
                 height: 1.4,
+              ),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _LlmSettingsCard extends StatelessWidget {
+  const _LlmSettingsCard({
+    required this.selectedProvider,
+    required this.selectedOpenAiModel,
+    required this.saving,
+    required this.ollamaUrlController,
+    required this.ollamaModelController,
+    required this.onProviderChanged,
+    required this.onOpenAiModelChanged,
+  });
+
+  final String selectedProvider;
+  final String selectedOpenAiModel;
+  final bool saving;
+  final TextEditingController ollamaUrlController;
+  final TextEditingController ollamaModelController;
+  final ValueChanged<String?> onProviderChanged;
+  final ValueChanged<String?> onOpenAiModelChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final usesOpenAi =
+        selectedProvider == AppSettingsService.providerOpenAi;
+
+    return Column(
+      children: [
+        DropdownButtonFormField<String>(
+          value: usesOpenAi
+              ? AppSettingsService.providerOpenAi
+              : AppSettingsService.providerOllama,
+          items: const <DropdownMenuItem<String>>[
+            DropdownMenuItem<String>(
+              value: AppSettingsService.providerOllama,
+              child: Text('Ollama'),
+            ),
+            DropdownMenuItem<String>(
+              value: AppSettingsService.providerOpenAi,
+              child: Text('OpenAI'),
+            ),
+          ],
+          onChanged: saving ? null : onProviderChanged,
+          dropdownColor: const Color(0xFF08111B),
+          iconEnabledColor: Colors.white70,
+          style: const TextStyle(color: Colors.white),
+          decoration: InputDecoration(
+            labelText: 'Provedor principal',
+            helperText:
+                'Troca o modelo usado pelo chat do assistente. A configuracao do provedor inativo fica guardada.',
+            prefixIcon: const Icon(Icons.hub_outlined),
+            labelStyle: TextStyle(color: Colors.white.withOpacity(0.82)),
+            helperStyle: TextStyle(
+              color: Colors.white.withOpacity(0.56),
+              height: 1.45,
+            ),
+            filled: true,
+            fillColor: Colors.white.withOpacity(0.04),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(20),
+              borderSide: BorderSide.none,
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
+        if (usesOpenAi) ...[
+          DropdownButtonFormField<String>(
+            value: AppSettingsService.openAiModelOptions.contains(
+                  selectedOpenAiModel,
+                )
+                ? selectedOpenAiModel
+                : AppSettingsService.defaultOpenAiModel,
+            items: AppSettingsService.openAiModelOptions
+                .map(
+                  (model) => DropdownMenuItem<String>(
+                    value: model,
+                    child: Text(model),
+                  ),
+                )
+                .toList(),
+            onChanged: saving ? null : onOpenAiModelChanged,
+            dropdownColor: const Color(0xFF08111B),
+            iconEnabledColor: Colors.white70,
+            style: const TextStyle(color: Colors.white),
+            decoration: InputDecoration(
+              labelText: 'Modelo OpenAI',
+              helperText:
+                  'Escolhe um dos modelos suportados para o chat do assistente.',
+              prefixIcon: const Icon(Icons.auto_awesome_outlined),
+              labelStyle: TextStyle(color: Colors.white.withOpacity(0.82)),
+              helperStyle: TextStyle(
+                color: Colors.white.withOpacity(0.56),
+                height: 1.45,
+              ),
+              filled: true,
+              fillColor: Colors.white.withOpacity(0.04),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(20),
+                borderSide: BorderSide.none,
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.03),
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(
+                color: Colors.white.withOpacity(0.08),
+              ),
+            ),
+            child: Text(
+              'A chave da OpenAI deixou de ser configurada aqui. O backend deve usar OPENAI_API_KEY no ambiente.',
+              style: TextStyle(
+                color: Colors.white.withOpacity(0.68),
+                height: 1.45,
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.03),
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(
+                color: Colors.white.withOpacity(0.08),
+              ),
+            ),
+            child: Text(
+              'Com OpenAI ativo, o chat deixa de depender do Ollama local. STT e TTS do backend continuam com a configuracao propria do core.',
+              style: TextStyle(
+                color: Colors.white.withOpacity(0.68),
+                height: 1.45,
+              ),
+            ),
+          ),
+        ] else ...[
+          _SettingsField(
+            controller: ollamaUrlController,
+            icon: Icons.link_rounded,
+            label: 'URL do Ollama',
+            hintText: AppSettingsService.defaultOllamaUrl,
+            helperText:
+                'Normalmente http://127.0.0.1:11434. O backend usa este endpoint para o chat local.',
+            keyboardType: TextInputType.url,
+            enabled: !saving,
+          ),
+          const SizedBox(height: 14),
+          _SettingsField(
+            controller: ollamaModelController,
+            icon: Icons.memory_outlined,
+            label: 'Modelo Ollama',
+            hintText: AppSettingsService.defaultOllamaModel,
+            helperText:
+                'Exemplo: llama3.1:8b. Usa o nome exato do modelo carregado no teu servidor Ollama.',
+            enabled: !saving,
+          ),
+          const SizedBox(height: 12),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.03),
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(
+                color: Colors.white.withOpacity(0.08),
+              ),
+            ),
+            child: Text(
+              'Com Ollama ativo, o assistente usa o modelo local configurado por conta. Podes manter a configuracao OpenAI guardada e voltar a ela quando quiseres.',
+              style: TextStyle(
+                color: Colors.white.withOpacity(0.68),
+                height: 1.45,
               ),
             ),
           ),

@@ -124,6 +124,16 @@ def _memory_label_from_key(key):
         return "Wake Word"
     if key == "wake_word_sensitivity":
         return "Sensibilidade Wake Word"
+    if key == "llm_provider":
+        return "Provedor LLM"
+    if key == "ollama_url":
+        return "URL Ollama"
+    if key == "ollama_model":
+        return "Modelo Ollama"
+    if key == "openai_model":
+        return "Modelo OpenAI"
+    if key == "openai_api_key":
+        return "Chave OpenAI"
     if key == "home_assistant_enabled":
         return "Home Assistant Ativo"
     if key == "home_assistant_url":

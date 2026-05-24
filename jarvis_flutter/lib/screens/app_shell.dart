@@ -93,6 +93,13 @@ class _AppShellState extends State<AppShell>
   }
 
   void _handleSettingsChanged() {
+    final visibleSections = _visibleSections;
+    if (!visibleSections.contains(_selectedSection)) {
+      setState(() {
+        _selectedSection = AppSection.voice;
+      });
+    }
+
     if (_supportsDesktopRuntime && _trayReady) {
       unawaited(_syncTray());
     }
@@ -308,6 +315,56 @@ class _AppShellState extends State<AppShell>
     });
   }
 
+  List<AppSection> get _visibleSections {
+    return <AppSection>[
+      AppSection.voice,
+      AppSection.chat,
+      if (_settings.homeAssistantEnabled) AppSection.devices,
+      AppSection.routines,
+      AppSection.memory,
+      AppSection.history,
+      AppSection.logs,
+      AppSection.settings,
+    ];
+  }
+
+  AppSection _resolveSelectedSection(List<AppSection> visibleSections) {
+    if (visibleSections.contains(_selectedSection)) {
+      return _selectedSection;
+    }
+    return AppSection.voice;
+  }
+
+  List<Widget> _buildSectionViews({
+    required List<AppSection> visibleSections,
+    required bool isVoiceOverlayMode,
+  }) {
+    return visibleSections.map((section) {
+      switch (section) {
+        case AppSection.voice:
+          return VoiceAssistantScreen(
+            key: _voiceScreenKey,
+            embedded: true,
+            overlayOnly: isVoiceOverlayMode,
+          );
+        case AppSection.chat:
+          return ChatScreen(embedded: true);
+        case AppSection.devices:
+          return const HomeAssistantDevicesScreen(embedded: true);
+        case AppSection.routines:
+          return const RoutinesScreen(embedded: true);
+        case AppSection.memory:
+          return AssistantMemoryScreen(embedded: true);
+        case AppSection.history:
+          return ActivityHistoryScreen(embedded: true);
+        case AppSection.logs:
+          return SystemLogsScreen(embedded: true);
+        case AppSection.settings:
+          return SettingsScreen(embedded: true);
+      }
+    }).toList();
+  }
+
   Future<void> _prepareVoiceOverlayWindow({
     bool activateOverlayMode = false,
   }) async {
@@ -396,32 +453,26 @@ class _AppShellState extends State<AppShell>
         final accountName = (_auth.user?.displayName ?? '').trim().isNotEmpty
             ? _auth.user!.displayName
             : (_auth.user?.email ?? '');
+        final visibleSections = _visibleSections;
+        final activeSection = isVoiceOverlayMode
+            ? AppSection.voice
+            : _resolveSelectedSection(visibleSections);
         final selectedIndex = isVoiceOverlayMode
-            ? AppSection.voice.index
-            : _selectedSection.index;
-        final sectionTitle = _sectionTitle(_selectedSection);
+            ? visibleSections.indexOf(AppSection.voice)
+            : visibleSections.indexOf(activeSection);
+        final sectionTitle = _sectionTitle(activeSection);
         final sectionSubtitle = _sectionSubtitle(
-          _selectedSection,
+          activeSection,
           assistantName,
         );
         final content = KeyedSubtree(
           key: _contentHostKey,
           child: IndexedStack(
             index: selectedIndex,
-            children: [
-              VoiceAssistantScreen(
-                key: _voiceScreenKey,
-                embedded: true,
-                overlayOnly: isVoiceOverlayMode,
-              ),
-              ChatScreen(embedded: true),
-              const HomeAssistantDevicesScreen(embedded: true),
-              const RoutinesScreen(embedded: true),
-              AssistantMemoryScreen(embedded: true),
-              ActivityHistoryScreen(embedded: true),
-              SystemLogsScreen(embedded: true),
-              SettingsScreen(embedded: true),
-            ],
+            children: _buildSectionViews(
+              visibleSections: visibleSections,
+              isVoiceOverlayMode: isVoiceOverlayMode,
+            ),
           ),
         );
 
@@ -443,6 +494,7 @@ class _AppShellState extends State<AppShell>
                     onLogout: _auth.loading
                         ? null
                         : () => unawaited(_auth.logout()),
+                    sections: visibleSections,
                     selectedSection: _selectedSection,
                     onSectionSelected: (section) {
                       Navigator.of(context).pop();
@@ -474,6 +526,7 @@ class _AppShellState extends State<AppShell>
                     child: Row(
                       children: [
                         _DesktopSidebarRail(
+                          sections: visibleSections,
                           selectedSection: _selectedSection,
                           sidebarVisible: _sidebarVisible,
                           onMenuTap: _toggleSidebar,
@@ -498,6 +551,7 @@ class _AppShellState extends State<AppShell>
                                   onLogout: _auth.loading
                                       ? null
                                       : () => unawaited(_auth.logout()),
+                                  sections: visibleSections,
                                   selectedSection: _selectedSection,
                                   onSectionSelected: (section) {
                                     _selectSection(section);
@@ -578,6 +632,7 @@ class _SidebarMenu extends StatelessWidget {
     required this.assistantName,
     required this.accountName,
     required this.onLogout,
+    required this.sections,
     required this.selectedSection,
     required this.onSectionSelected,
   });
@@ -585,6 +640,7 @@ class _SidebarMenu extends StatelessWidget {
   final String assistantName;
   final String accountName;
   final VoidCallback? onLogout;
+  final List<AppSection> sections;
   final AppSection selectedSection;
   final ValueChanged<AppSection> onSectionSelected;
 
@@ -625,7 +681,7 @@ class _SidebarMenu extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 12),
-              for (final section in AppSection.values) ...[
+              for (final section in sections) ...[
                 _NavButton(
                   icon: _sectionIcon(section),
                   title: _sectionTitle(section),
@@ -656,7 +712,7 @@ class _SidebarMenu extends StatelessWidget {
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      'O modo voz abre primeiro e o chat, os dispositivos, as rotinas, a memoria, o historico, os logs e as configuracoes ficam sempre disponiveis no menu lateral.',
+                      'O modo voz abre primeiro e as restantes areas disponiveis ficam sempre acessiveis no menu lateral.',
                       style: const TextStyle(color: Colors.white, height: 1.45),
                     ),
                   ],
@@ -675,6 +731,7 @@ class _DrawerMenu extends StatelessWidget {
     required this.assistantName,
     required this.accountName,
     required this.onLogout,
+    required this.sections,
     required this.selectedSection,
     required this.onSectionSelected,
   });
@@ -682,6 +739,7 @@ class _DrawerMenu extends StatelessWidget {
   final String assistantName;
   final String accountName;
   final VoidCallback? onLogout;
+  final List<AppSection> sections;
   final AppSection selectedSection;
   final ValueChanged<AppSection> onSectionSelected;
 
@@ -710,7 +768,7 @@ class _DrawerMenu extends StatelessWidget {
                     compact: true,
                   ),
                   const SizedBox(height: 24),
-                  for (final section in AppSection.values) ...[
+                  for (final section in sections) ...[
                     _NavButton(
                       icon: _sectionIcon(section),
                       title: _sectionTitle(section),
@@ -771,7 +829,7 @@ class _BrandPanel extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           Text(
-            'Workspace principal do assistente com voz, chat, dispositivos, rotinas, memoria, historico, logs e configuracoes.',
+            'Workspace principal do assistente com voz, chat, rotinas, memoria, historico, logs e configuracoes.',
             style: TextStyle(
               color: Colors.white.withOpacity(0.72),
               height: 1.5,
@@ -898,12 +956,14 @@ class _NavButton extends StatelessWidget {
 
 class _DesktopSidebarRail extends StatelessWidget {
   const _DesktopSidebarRail({
+    required this.sections,
     required this.selectedSection,
     required this.sidebarVisible,
     required this.onMenuTap,
     required this.onSectionSelected,
   });
 
+  final List<AppSection> sections;
   final AppSection selectedSection;
   final bool sidebarVisible;
   final VoidCallback onMenuTap;
@@ -938,7 +998,7 @@ class _DesktopSidebarRail extends StatelessWidget {
           Expanded(
             child: Column(
               children: [
-                for (final section in AppSection.values) ...[
+                for (final section in sections) ...[
                   _RailIconButton(
                     icon: _sectionIcon(section),
                     tooltip: _sectionTitle(section),

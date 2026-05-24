@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+from config import OPENAI_CHAT_MODEL, OLLAMA_URL, MODEL
 from db_utils import connect
 
 
@@ -12,6 +13,11 @@ SETTINGS_DEFAULTS = {
     "user_name": "",
     "wake_word_phrase": "Jarvis",
     "wake_word_sensitivity": "40",
+    "llm_provider": "ollama",
+    "ollama_url": OLLAMA_URL,
+    "ollama_model": MODEL,
+    "openai_model": OPENAI_CHAT_MODEL,
+    "openai_api_key": "",
     "home_assistant_enabled": "false",
     "home_assistant_url": "",
     "home_assistant_token": "",
@@ -22,6 +28,11 @@ SETTINGS_LABELS = {
     "user_name": "Nome do Utilizador",
     "wake_word_phrase": "Wake Word",
     "wake_word_sensitivity": "Sensibilidade Wake Word",
+    "llm_provider": "Provedor LLM",
+    "ollama_url": "URL Ollama",
+    "ollama_model": "Modelo Ollama",
+    "openai_model": "Modelo OpenAI",
+    "openai_api_key": "Chave OpenAI",
     "home_assistant_enabled": "Home Assistant Ativo",
     "home_assistant_url": "URL Home Assistant",
     "home_assistant_token": "Token Home Assistant",
@@ -31,6 +42,8 @@ SETTINGS_LABELS = {
 def _normalize_setting_value(key: str, value: object) -> str:
     if key == "home_assistant_enabled":
         return "true" if str(value).strip().lower() in {"1", "true", "yes", "on"} else "false"
+    if key == "llm_provider":
+        return "openai" if str(value).strip().lower() == "openai" else "ollama"
     if key == "wake_word_sensitivity":
         try:
             level = int(str(value).strip() or SETTINGS_DEFAULTS[key])
@@ -179,6 +192,14 @@ def load_settings_values(user_id: str | None = None) -> dict[str, str]:
         "home_assistant_enabled",
         values.get("home_assistant_enabled", SETTINGS_DEFAULTS["home_assistant_enabled"]),
     )
+    values["llm_provider"] = _normalize_setting_value(
+        "llm_provider",
+        values.get("llm_provider", SETTINGS_DEFAULTS["llm_provider"]),
+    )
+    values["ollama_url"] = values.get("ollama_url", "").strip() or SETTINGS_DEFAULTS["ollama_url"]
+    values["ollama_model"] = values.get("ollama_model", "").strip() or SETTINGS_DEFAULTS["ollama_model"]
+    values["openai_model"] = values.get("openai_model", "").strip() or SETTINGS_DEFAULTS["openai_model"]
+    values["openai_api_key"] = values.get("openai_api_key", "").strip()
     values["name"] = user_name
     return values
 

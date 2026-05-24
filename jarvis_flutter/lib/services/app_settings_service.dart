@@ -12,6 +12,17 @@ import 'memory_service.dart';
 
 class AppSettingsService extends ChangeNotifier {
   static const String defaultAssistantName = 'Jarvis';
+  static const String providerOllama = 'ollama';
+  static const String providerOpenAi = 'openai';
+  static const String defaultOllamaUrl = 'http://127.0.0.1:11434';
+  static const String defaultOllamaModel = 'llama3.1:8b';
+  static const String defaultOpenAiModel = 'gpt-4.1-mini';
+  static const List<String> openAiModelOptions = <String>[
+    'gpt-4.1-mini',
+    'gpt-4.1',
+    'gpt-4o-mini',
+    'gpt-4o',
+  ];
   static const String defaultTtsMode = 'local';
 
   static final AppSettingsService _instance = AppSettingsService._internal();
@@ -35,6 +46,10 @@ class AppSettingsService extends ChangeNotifier {
   String _userName = '';
   String _wakeWordPhrase = defaultAssistantName;
   int _wakeWordSensitivity = 40;
+  String _llmProvider = providerOllama;
+  String _ollamaUrl = defaultOllamaUrl;
+  String _ollamaModel = defaultOllamaModel;
+  String _openAiModel = defaultOpenAiModel;
   bool _homeAssistantEnabled = false;
   String _homeAssistantUrl = '';
   String _homeAssistantToken = '';
@@ -58,6 +73,10 @@ class AppSettingsService extends ChangeNotifier {
 
   String get userName => _userName.trim();
   int get wakeWordSensitivity => _wakeWordSensitivity;
+  String get llmProvider => _normalizeLlmProvider(_llmProvider);
+  String get ollamaUrl => _ollamaUrl.trim();
+  String get ollamaModel => _ollamaModel.trim();
+  String get openAiModel => _normalizeOpenAiModel(_openAiModel);
   bool get homeAssistantEnabled => _homeAssistantEnabled;
   String get homeAssistantUrl => _homeAssistantUrl.trim();
   String get homeAssistantToken => _homeAssistantToken.trim();
@@ -133,6 +152,10 @@ class AppSettingsService extends ChangeNotifier {
     required String userName,
     required String wakeWordPhrase,
     required int wakeWordSensitivity,
+    required String llmProvider,
+    required String ollamaUrl,
+    required String ollamaModel,
+    required String openAiModel,
     required bool homeAssistantEnabled,
     required String homeAssistantUrl,
     required String homeAssistantToken,
@@ -152,6 +175,14 @@ class AppSettingsService extends ChangeNotifier {
     final cleanWakeWordSensitivity = _clampWakeWordSensitivity(
       wakeWordSensitivity,
     );
+    final cleanLlmProvider = _normalizeLlmProvider(llmProvider);
+    final cleanOllamaUrl = ollamaUrl.trim().isEmpty
+        ? defaultOllamaUrl
+        : ollamaUrl.trim();
+    final cleanOllamaModel = ollamaModel.trim().isEmpty
+        ? defaultOllamaModel
+        : ollamaModel.trim();
+    final cleanOpenAiModel = _normalizeOpenAiModel(openAiModel);
     final cleanHomeAssistantEnabled = homeAssistantEnabled;
     final cleanHomeAssistantUrl = homeAssistantUrl.trim();
     final cleanHomeAssistantToken = homeAssistantToken.trim();
@@ -173,6 +204,10 @@ class AppSettingsService extends ChangeNotifier {
       _userName = cleanUserName;
       _wakeWordPhrase = cleanWakeWordPhrase;
       _wakeWordSensitivity = cleanWakeWordSensitivity;
+      _llmProvider = cleanLlmProvider;
+      _ollamaUrl = cleanOllamaUrl;
+      _ollamaModel = cleanOllamaModel;
+      _openAiModel = cleanOpenAiModel;
       _homeAssistantEnabled = cleanHomeAssistantEnabled;
       _homeAssistantUrl = cleanHomeAssistantUrl;
       _homeAssistantToken = cleanHomeAssistantToken;
@@ -190,6 +225,10 @@ class AppSettingsService extends ChangeNotifier {
           userName: cleanUserName,
           wakeWordPhrase: cleanWakeWordPhrase,
           wakeWordSensitivity: cleanWakeWordSensitivity,
+          llmProvider: cleanLlmProvider,
+          ollamaUrl: cleanOllamaUrl,
+          ollamaModel: cleanOllamaModel,
+          openAiModel: cleanOpenAiModel,
           homeAssistantEnabled: cleanHomeAssistantEnabled,
           homeAssistantUrl: cleanHomeAssistantUrl,
           homeAssistantToken: cleanHomeAssistantToken,
@@ -204,6 +243,11 @@ class AppSettingsService extends ChangeNotifier {
             'wake_word_sensitivity',
             cleanWakeWordSensitivity.toString(),
           );
+          await _saveField('llm_provider', cleanLlmProvider);
+          await _saveField('ollama_url', cleanOllamaUrl);
+          await _saveField('ollama_model', cleanOllamaModel);
+          await _saveField('openai_model', cleanOpenAiModel);
+          await _saveField('openai_api_key', '');
           await _saveField(
             'home_assistant_enabled',
             cleanHomeAssistantEnabled ? 'true' : 'false',
@@ -240,6 +284,10 @@ class AppSettingsService extends ChangeNotifier {
       _userName = '';
       _wakeWordPhrase = defaultAssistantName;
       _wakeWordSensitivity = 40;
+      _llmProvider = providerOllama;
+      _ollamaUrl = defaultOllamaUrl;
+      _ollamaModel = defaultOllamaModel;
+      _openAiModel = defaultOpenAiModel;
       _homeAssistantEnabled = false;
       _homeAssistantUrl = '';
       _homeAssistantToken = '';
@@ -279,9 +327,14 @@ class AppSettingsService extends ChangeNotifier {
     _knownKeys = entries.map((entry) => entry.key).toSet();
 
     final assistantName = _entryValue(entries, 'assistant_name');
-    final userName = _entryValue(entries, 'name');
+    final userName =
+        _entryValue(entries, 'user_name') ?? _entryValue(entries, 'name');
     final wakeWordPhrase = _entryValue(entries, 'wake_word_phrase');
     final wakeWordSensitivity = _entryValue(entries, 'wake_word_sensitivity');
+    final llmProvider = _entryValue(entries, 'llm_provider');
+    final ollamaUrl = _entryValue(entries, 'ollama_url');
+    final ollamaModel = _entryValue(entries, 'ollama_model');
+    final openAiModel = _entryValue(entries, 'openai_model');
     final homeAssistantEnabled = _entryValue(entries, 'home_assistant_enabled');
     final homeAssistantUrl = _entryValue(entries, 'home_assistant_url');
     final homeAssistantToken = _entryValue(entries, 'home_assistant_token');
@@ -306,6 +359,26 @@ class AppSettingsService extends ChangeNotifier {
         : preserveExistingValues
             ? _wakeWordSensitivity
             : 40;
+    _llmProvider = llmProvider?.trim().isNotEmpty == true
+        ? _normalizeLlmProvider(llmProvider!)
+        : preserveExistingValues
+            ? _llmProvider
+            : providerOllama;
+    _ollamaUrl = ollamaUrl?.trim().isNotEmpty == true
+        ? ollamaUrl!.trim()
+        : preserveExistingValues
+            ? _ollamaUrl
+            : defaultOllamaUrl;
+    _ollamaModel = ollamaModel?.trim().isNotEmpty == true
+        ? ollamaModel!.trim()
+        : preserveExistingValues
+            ? _ollamaModel
+            : defaultOllamaModel;
+    _openAiModel = openAiModel?.trim().isNotEmpty == true
+        ? _normalizeOpenAiModel(openAiModel!)
+        : preserveExistingValues
+            ? _openAiModel
+            : defaultOpenAiModel;
     _homeAssistantEnabled = homeAssistantEnabled != null
         ? _parseBool(homeAssistantEnabled)
         : preserveExistingValues
@@ -329,6 +402,10 @@ class AppSettingsService extends ChangeNotifier {
     _userName = '';
     _wakeWordPhrase = defaultAssistantName;
     _wakeWordSensitivity = 40;
+    _llmProvider = providerOllama;
+    _ollamaUrl = defaultOllamaUrl;
+    _ollamaModel = defaultOllamaModel;
+    _openAiModel = defaultOpenAiModel;
     _homeAssistantEnabled = false;
     _homeAssistantUrl = '';
     _homeAssistantToken = '';
@@ -359,6 +436,10 @@ class AppSettingsService extends ChangeNotifier {
     final userName = values['user_name'];
     final wakeWordPhrase = values['wake_word_phrase'];
     final wakeWordSensitivity = values['wake_word_sensitivity'];
+    final llmProvider = values['llm_provider'];
+    final ollamaUrl = values['ollama_url'];
+    final ollamaModel = values['ollama_model'];
+    final openAiModel = values['openai_model'];
     final homeAssistantEnabled = values['home_assistant_enabled'];
     final homeAssistantUrl = values['home_assistant_url'];
     final homeAssistantToken = values['home_assistant_token'];
@@ -383,6 +464,26 @@ class AppSettingsService extends ChangeNotifier {
         : preserveExistingValues
             ? _wakeWordSensitivity
             : 40;
+    _llmProvider = llmProvider?.trim().isNotEmpty == true
+        ? _normalizeLlmProvider(llmProvider!)
+        : preserveExistingValues
+            ? _llmProvider
+            : providerOllama;
+    _ollamaUrl = ollamaUrl?.trim().isNotEmpty == true
+        ? ollamaUrl!.trim()
+        : preserveExistingValues
+            ? _ollamaUrl
+            : defaultOllamaUrl;
+    _ollamaModel = ollamaModel?.trim().isNotEmpty == true
+        ? ollamaModel!.trim()
+        : preserveExistingValues
+            ? _ollamaModel
+            : defaultOllamaModel;
+    _openAiModel = openAiModel?.trim().isNotEmpty == true
+        ? _normalizeOpenAiModel(openAiModel!)
+        : preserveExistingValues
+            ? _openAiModel
+            : defaultOpenAiModel;
     _homeAssistantEnabled = homeAssistantEnabled != null
         ? _parseBool(homeAssistantEnabled)
         : preserveExistingValues
@@ -465,6 +566,18 @@ class AppSettingsService extends ChangeNotifier {
       _wakeWordSensitivity = _clampWakeWordSensitivity(
         int.tryParse(data['wake_word_sensitivity']?.toString() ?? '') ?? 40,
       );
+      _llmProvider = _normalizeLlmProvider(
+        data['llm_provider']?.toString().trim() ?? '',
+      );
+      _ollamaUrl = data['ollama_url']?.toString().trim().isNotEmpty == true
+          ? data['ollama_url'].toString().trim()
+          : defaultOllamaUrl;
+      _ollamaModel = data['ollama_model']?.toString().trim().isNotEmpty == true
+          ? data['ollama_model'].toString().trim()
+          : defaultOllamaModel;
+      _openAiModel = data['openai_model']?.toString().trim().isNotEmpty == true
+          ? _normalizeOpenAiModel(data['openai_model'].toString().trim())
+          : defaultOpenAiModel;
       _homeAssistantUrl = data['home_assistant_url']?.toString().trim() ?? '';
       _homeAssistantToken = data['home_assistant_token']?.toString().trim() ?? '';
       _homeAssistantEnabled = data.containsKey('home_assistant_enabled')
@@ -491,6 +604,10 @@ class AppSettingsService extends ChangeNotifier {
         'user_name': userName,
         'wake_word_phrase': wakeWordPhrase,
         'wake_word_sensitivity': wakeWordSensitivity,
+        'llm_provider': llmProvider,
+        'ollama_url': ollamaUrl,
+        'ollama_model': ollamaModel,
+        'openai_model': openAiModel,
         'home_assistant_enabled': homeAssistantEnabled,
         'home_assistant_url': homeAssistantUrl,
         'home_assistant_token': homeAssistantToken,
@@ -540,5 +657,19 @@ class AppSettingsService extends ChangeNotifier {
     return value.trim().toLowerCase() == 'backend'
         ? 'backend'
         : defaultTtsMode;
+  }
+
+  String _normalizeLlmProvider(String value) {
+    return value.trim().toLowerCase() == providerOpenAi
+        ? providerOpenAi
+        : providerOllama;
+  }
+
+  String _normalizeOpenAiModel(String value) {
+    final clean = value.trim();
+    if (openAiModelOptions.contains(clean)) {
+      return clean;
+    }
+    return defaultOpenAiModel;
   }
 }

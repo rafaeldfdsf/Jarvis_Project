@@ -163,6 +163,11 @@ class AppSettingsUpdateRequest(BaseModel):
     user_name: str = ''
     wake_word_phrase: str = ''
     wake_word_sensitivity: int = 40
+    llm_provider: str = 'ollama'
+    ollama_url: str = ''
+    ollama_model: str = ''
+    openai_model: str = ''
+    openai_api_key: str = ''
     home_assistant_enabled: bool = False
     home_assistant_url: str = ''
     home_assistant_token: str = ''

@@ -11,9 +11,11 @@ class LLMUnavailableError(RuntimeError):
     """Erro levantado quando o Ollama nao esta acessivel."""
 
 
-def call_llm(messages):
+def call_llm(messages, *, model: str | None = None, ollama_url: str | None = None):
+    selected_model = (model or MODEL).strip() or MODEL
+    selected_ollama_url = (ollama_url or OLLAMA_URL).strip().rstrip("/") or OLLAMA_URL
     payload = {
-        'model': MODEL,
+        'model': selected_model,
         'messages': messages,
         'stream': False,
         'options': {
@@ -24,7 +26,7 @@ def call_llm(messages):
 
     try:
         response = requests.post(
-            f'{OLLAMA_URL}/api/chat',
+            f'{selected_ollama_url}/api/chat',
             json=payload,
             timeout=LLM_TIMEOUT_SECONDS,
         )
@@ -34,12 +36,12 @@ def call_llm(messages):
             logger,
             40,
             'llm_unavailable',
-            ollama_url=OLLAMA_URL,
-            model=MODEL,
+            ollama_url=selected_ollama_url,
+            model=selected_model,
             error=str(exc),
         )
         raise LLMUnavailableError(
-            f'Ollama indisponivel em {OLLAMA_URL}. Inicia o servidor Ollama e confirma que o modelo "{MODEL}" esta carregado.'
+            f'Ollama indisponivel em {selected_ollama_url}. Inicia o servidor Ollama e confirma que o modelo "{selected_model}" esta carregado.'
         ) from exc
 
     try:
@@ -50,7 +52,7 @@ def call_llm(messages):
             logger,
             40,
             'llm_invalid_response',
-            ollama_url=OLLAMA_URL,
+            ollama_url=selected_ollama_url,
             error=str(exc),
         )
         raise LLMUnavailableError('O Ollama respondeu num formato inesperado.') from exc
@@ -59,7 +61,7 @@ def call_llm(messages):
         logger,
         20,
         'llm_response',
-        model=MODEL,
+        model=selected_model,
         message_count=len(messages),
         reply_length=len(reply),
     )

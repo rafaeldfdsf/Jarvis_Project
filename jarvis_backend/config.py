@@ -66,6 +66,7 @@ _load_dotenv(ENV_FILE)
 class Settings:
     ollama_url: str
     model: str
+    openai_chat_model: str
     sample_rate: int
     max_turns: int
     db_file: Path
@@ -106,6 +107,10 @@ class Settings:
 settings = Settings(
     ollama_url=_env_str("JARVIS_OLLAMA_URL", "OLLAMA_URL", default="http://127.0.0.1:11434"),
     model=_env_str("JARVIS_OLLAMA_MODEL", "OLLAMA_MODEL", "MODEL", default="llama3.1:8b"),
+    openai_chat_model=_env_str(
+        "JARVIS_OPENAI_CHAT_MODEL",
+        default="gpt-4.1-mini",
+    ),
     sample_rate=_env_int("JARVIS_SAMPLE_RATE", "SAMPLE_RATE", default=16000),
     max_turns=_env_int("JARVIS_MAX_TURNS", "MAX_TURNS", default=6),
     db_file=BASE_DIR / _env_str("JARVIS_DB_FILE", "DB_FILE", default="memory.db"),
@@ -154,6 +159,7 @@ settings = Settings(
 # Backward-compatible exports for the existing modules.
 OLLAMA_URL = settings.ollama_url
 MODEL = settings.model
+OPENAI_CHAT_MODEL = settings.openai_chat_model
 SAMPLE_RATE = settings.sample_rate
 MAX_TURNS = settings.max_turns
 DB_FILE = str(settings.db_file)
