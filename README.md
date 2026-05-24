@@ -7,6 +7,12 @@ Workspace com quatro modulos principais:
 - `jarvis_flutter`: app Flutter para login, chat, voz e configuracao.
 - `jarvis_agent_pi`: agente base para Raspberry Pi ligado ao core por WebSocket.
 
+Estado funcional atual:
+
+- o chat pode usar `Ollama` ou `OpenAI`, escolhido por conta nas configuracoes da app
+- a chave OpenAI deixou de ser configurada no Flutter; o backend deve usar `OPENAI_API_KEY`
+- quando o Home Assistant esta desligado, a navegacao da app esconde os menus correspondentes
+
 Documentacao de continuidade:
 
 - `MANUAL_DE_CONTINUIDADE.md`: manual tecnico completo com arquitetura, estrutura e notas de continuidade.
@@ -16,8 +22,8 @@ Documentacao de continuidade:
 
 - Python 3.11 ou superior
 - Flutter SDK instalado
-- Chave OpenAI para STT/TTS
-- Ollama disponivel para o modelo local configurado no backend
+- Chave OpenAI para STT/TTS, visao e opcionalmente chat OpenAI
+- Ollama disponivel apenas se quiseres usar o provedor local de chat
 - Windows para correr o `jarvis_agent_windows`
 - SMTP configurado no backend se quiseres verificacao por email e recuperacao de palavra-passe
 
@@ -42,6 +48,7 @@ Variaveis principais em `.env`:
 - `JARVIS_API_TOKEN`
 - `JARVIS_OLLAMA_URL`
 - `JARVIS_OLLAMA_MODEL`
+- `JARVIS_OPENAI_CHAT_MODEL`
 - `JARVIS_APP_NAME`
 - `JARVIS_SMTP_HOST`
 - `JARVIS_SMTP_PORT`
@@ -127,8 +134,10 @@ Notas:
 - `127.0.0.1` so funciona se a app estiver na mesma maquina do servico.
 - Em telemovel real, usa o IP do PC na rede local.
 - O Flutter usa agora login por utilizador e guarda a sessao localmente.
-- `JARVIS_API_TOKEN` continua a ser util para compatibilidade e para autenticacao dos agentes.
-- Os agentes ligados ao core aparecem na seccao de dispositivos das configuracoes da app.
+- `JARVIS_API_TOKEN` continua a ser util para compatibilidade e para autenticacao dos agentes, mas a app ja nao depende dele para login normal.
+- A escolha entre `Ollama` e `OpenAI` e feita em `Configuracoes > LLM`.
+- O modelo OpenAI e escolhido por lista fixa na app; a chave deve existir no backend em `OPENAI_API_KEY`.
+- Se o Home Assistant estiver desligado, a app esconde a secao de dispositivos Home Assistant no menu lateral.
 
 ## Login e conta
 

@@ -1,6 +1,23 @@
 # Manual De Continuidade Do Projeto Jarvis
 
-Estado observado no workspace em 2026-04-18.
+Estado observado no workspace em 2026-05-24.
+
+## Atualizacao 2026-05-24
+
+Desde a versao descrita abaixo, o produto passou a refletir estas decisoes novas de configuracao e navegacao:
+
+- o chat deixou de depender sempre do Ollama; cada conta pode escolher `ollama` ou `openai`
+- a selecao do modelo OpenAI na app passou a ser feita por lista fixa
+- a chave OpenAI deixou de ser configurada no Flutter
+- o backend deve usar `OPENAI_API_KEY` como fonte principal da chave
+- o cliente limpa chaves OpenAI antigas guardadas por utilizador ao gravar configuracoes
+- quando o Home Assistant esta desligado, a secao de dispositivos Home Assistant desaparece da navegacao da app
+
+Impacto pratico:
+
+1. A arquitetura atual de LLM e configuravel por conta, e nao fixa por projeto.
+2. O Flutter continua a mostrar configuracao de Home Assistant, mas ja nao mostra os menus dessa area quando a integracao esta desligada.
+3. A documentacao antiga que dizia "a conversa passa por modelo local" deve ser lida como historica.
 
 ## Atualizacao 2026-05-02
 
@@ -63,12 +80,12 @@ O workspace esta dividido em tres modulos principais:
 - `jarvis_agent_windows`: agente FastAPI local para Windows que executa automacoes do desktop, faz captura de ecra e gere wake word no proprio PC.
 - `jarvis_flutter`: cliente Flutter com modo voz, modo chat, memoria, historico, logs e configuracoes.
 
-Em termos funcionais, o sistema usa dois motores de IA:
+Em termos funcionais, o sistema usa hoje dois tipos de motores de IA:
 
-- Ollama: para a conversa principal do assistente.
-- OpenAI: para transcricao de audio, sintese de voz e analise visual do ecra.
+- chat: `Ollama` ou `OpenAI`, conforme a configuracao da conta
+- voz e visao: `OpenAI` para transcricao, sintese e analise visual
 
-Ou seja: a conversa passa por modelo local, mas a voz e a visao dependem da OpenAI.
+Ou seja: a voz e a visao continuam dependentes da OpenAI, mas o chat ja nao e obrigatoriamente local.
 
 ## 2. Arquitetura em alto nivel
 
@@ -76,7 +93,8 @@ Ou seja: a conversa passa por modelo local, mas a voz e a visao dependem da Open
 flowchart LR
     U["Utilizador"] --> F["jarvis_flutter"]
     F --> B["jarvis_backend"]
-    B --> O["Ollama"]
+    B --> O["Ollama Chat"]
+    B --> C["OpenAI Chat"]
     B --> A["OpenAI STT / TTS / Vision"]
     F --> W["jarvis_agent_windows"]
     B --> W
@@ -163,8 +181,8 @@ Dependencias externas reais:
 
 - Python 3.11+
 - Flutter SDK
-- Ollama a correr e com o modelo configurado
-- `OPENAI_API_KEY` para STT, TTS e visao
+- Ollama a correr apenas se quiseres usar o provedor local
+- `OPENAI_API_KEY` para STT, TTS, visao e opcionalmente chat OpenAI
 - Windows para o agente local
 
 Variaveis mais importantes no backend:
@@ -173,6 +191,7 @@ Variaveis mais importantes no backend:
 - `JARVIS_API_TOKEN`
 - `JARVIS_OLLAMA_URL`
 - `JARVIS_OLLAMA_MODEL`
+- `JARVIS_OPENAI_CHAT_MODEL`
 - `JARVIS_LLM_TIMEOUT_SECONDS`
 - `JARVIS_DESKTOP_AGENT_URL`
 
@@ -406,6 +425,16 @@ O backend e o cerebro central do sistema. Ele:
   - Monta payload com `MODEL`, `temperature` e `top_p`.
   - Se Ollama falhar, levanta `LLMUnavailableError`.
   - Faz logging estruturado da indisponibilidade e do tamanho da resposta.
+
+- `jarvis_backend/llm/openai.py`
+  - Cliente do chat OpenAI para o backend.
+  - Usa a chave configurada por ambiente ou pelo store de settings.
+  - Serve o caminho em que `llm_provider = openai`.
+
+- `jarvis_backend/llm/service.py`
+  - Dispatcher de LLM.
+  - Decide se o turno de chat segue para `ollama.py` ou `openai.py`.
+  - Centraliza a escolha por provider/modelo.
 
 ### 7.7 Pacote `memory/`
 
@@ -710,7 +739,8 @@ O Flutter e a interface operacional do assistente. Ele:
     - criar sessao;
     - enviar texto para `/chat`;
     - enviar audio para `/voice/turn`;
-    - ler e alterar memoria.
+    - ler e alterar memoria;
+    - guardar settings, incluindo provider LLM e configuracao Home Assistant.
   - Converte timeouts e erros de ligacao em mensagens mais legiveis.
 
 - `agent_service.dart`
@@ -724,9 +754,17 @@ O Flutter e a interface operacional do assistente. Ele:
   - Tambem define os modelos de resposta do agent.
 
 - `app_settings_service.dart`
-  - Service singleton para nome do assistente, nome do utilizador e wake word.
+  - Service singleton para nome do assistente, nome do utilizador, wake word, LLM, audio local e Home Assistant.
   - Persiste localmente em `jarvis_settings.json`.
-  - Tenta sincronizar essas informacoes com a memoria do backend nas chaves:
+  - Tenta sincronizar essas informacoes com a memoria/settings do backend.
+  - Passou a gerir:
+    - `llm_provider`
+    - `ollama_url`
+    - `ollama_model`
+    - `openai_model`
+    - `home_assistant_enabled`
+  - A chave OpenAI deixou de ser configurada no UI; ao guardar, o cliente envia `openai_api_key` vazio para limpar restos antigos.
+  - Continua a espelhar informacoes basicas nas chaves:
     - `assistant_name`
     - `name`
     - `wake_word_phrase`
@@ -804,6 +842,8 @@ O Flutter e a interface operacional do assistente. Ele:
   - Define `AppSection` com:
     - `voice`
     - `chat`
+    - `devices`
+    - `routines`
     - `memory`
     - `history`
     - `logs`
@@ -814,6 +854,9 @@ O Flutter e a interface operacional do assistente. Ele:
     - gerir modo normal vs overlay de voz;
     - esconder para tray em vez de fechar;
     - mostrar banner de wake prompt.
+  - A lista real de secoes visiveis passou a ser dinamica:
+    - `devices` so aparece quando `homeAssistantEnabled` esta ativo
+    - se o utilizador desligar Home Assistant enquanto estiver nessa secao, a app volta para `voice`
   - E o centro de navegacao da UI.
 
 - `voice_assistant_screen.dart`
@@ -860,6 +903,13 @@ O Flutter e a interface operacional do assistente. Ele:
     - nome do assistente;
     - nome do utilizador;
     - wake word;
+    - LLM (`Ollama` ou `OpenAI`);
+    - modelo OpenAI por lista fixa;
+    - configuracao do Ollama;
+    - microfone;
+    - TTS;
+    - dispositivos;
+    - Home Assistant;
     - limpeza da memoria.
   - Trabalha por cima de `AppSettingsService`.
   - Mostra feedback por `SnackBar`.
@@ -964,7 +1014,7 @@ O caminho principal hoje parece ser:
 - Flutter como interface principal
 - Backend FastAPI como cerebro
 - Agent Windows para automacao local e wake word
-- Ollama para conversa
+- Ollama ou OpenAI para conversa
 - OpenAI para STT/TTS/visao
 
 ### 10.2 Caminho legado ou incompleto

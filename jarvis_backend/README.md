@@ -2,6 +2,12 @@
 
 Backend FastAPI do Jarvis. Expoe autenticacao, sessoes de chat, memoria, transcricao, TTS, configuracoes e o fluxo de voz completo.
 
+Estado funcional atual:
+
+- o provedor de chat pode ser `ollama` ou `openai`, por conta
+- a app Flutter ja nao pede a chave OpenAI; o backend deve ter `OPENAI_API_KEY`
+- `JARVIS_OPENAI_CHAT_MODEL` define o modelo OpenAI por defeito do backend
+
 ## Requisitos
 
 - Python 3.11+
@@ -19,7 +25,7 @@ pip install -r requirements.txt
 
 Variaveis mais importantes:
 
-- `OPENAI_API_KEY`: obrigatoria para transcricao, TTS e analise visual do ecra; tambem pode servir de fallback para o chat OpenAI
+- `OPENAI_API_KEY`: obrigatoria para transcricao, TTS e analise visual do ecra; tambem serve de fallback para o chat OpenAI
 - `JARVIS_API_TOKEN`: ativa auth Bearer de compatibilidade e autenticacao dos agentes
 - `JARVIS_OLLAMA_URL`: URL do Ollama
 - `JARVIS_OLLAMA_MODEL`: modelo usado pelo assistente
@@ -105,6 +111,24 @@ Notas:
 - quando a password e reposta, as sessoes antigas dessa conta sao invalidadas
 - `GET /health` mostra `auth_enabled`, `user_count` e `email_enabled`
 - o Flutter usa sessoes de utilizador por defeito, sem depender de `JARVIS_API_TOKEN`
+
+## Chat e configuracoes LLM
+
+O endpoint `PUT /settings` aceita e persiste, por conta:
+
+- `llm_provider`
+- `ollama_url`
+- `ollama_model`
+- `openai_model`
+- `openai_api_key`
+
+Na pratica atual do produto:
+
+- a UI usa `llm_provider` para alternar entre `Ollama` e `OpenAI`
+- o modelo OpenAI e escolhido por lista fixa no Flutter
+- a chave OpenAI deixou de ser editavel na app
+- o cliente envia `openai_api_key` vazio para limpar chaves antigas guardadas por utilizador
+- o backend deve usar `OPENAI_API_KEY` do ambiente como fonte principal
 
 ## Nova arquitetura de agentes
 
