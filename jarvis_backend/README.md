@@ -6,7 +6,7 @@ Backend FastAPI do Jarvis. Expoe autenticacao, sessoes de chat, memoria, transcr
 
 - Python 3.11+
 - Ollama acessivel no URL configurado
-- `OPENAI_API_KEY` para STT/TTS
+- `OPENAI_API_KEY` para STT/TTS e opcionalmente para chat OpenAI
 - SMTP configurado se quiseres verificacao por email e recuperacao de palavra-passe
 
 ## Configuracao
@@ -19,10 +19,11 @@ pip install -r requirements.txt
 
 Variaveis mais importantes:
 
-- `OPENAI_API_KEY`: obrigatoria para transcricao, TTS e analise visual do ecra
+- `OPENAI_API_KEY`: obrigatoria para transcricao, TTS e analise visual do ecra; tambem pode servir de fallback para o chat OpenAI
 - `JARVIS_API_TOKEN`: ativa auth Bearer de compatibilidade e autenticacao dos agentes
 - `JARVIS_OLLAMA_URL`: URL do Ollama
 - `JARVIS_OLLAMA_MODEL`: modelo usado pelo assistente
+- `JARVIS_OPENAI_CHAT_MODEL`: modelo usado quando o provedor de chat for OpenAI
 - `JARVIS_LLM_TIMEOUT_SECONDS`: timeout das chamadas ao modelo
 - `JARVIS_APP_NAME`: nome usado nos emails transacionais
 - `JARVIS_SMTP_HOST`: servidor SMTP

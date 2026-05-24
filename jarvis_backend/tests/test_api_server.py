@@ -494,7 +494,23 @@ class ApiServerTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()[0]["key"], "assistant_name")
-        mock_update_settings.assert_called_once()
+        mock_update_settings.assert_called_once_with(
+            {
+                "assistant_name": "Daniel",
+                "user_name": "Rafael",
+                "wake_word_phrase": "Daniel",
+                "wake_word_sensitivity": 40,
+                "llm_provider": "ollama",
+                "ollama_url": "",
+                "ollama_model": "",
+                "openai_model": "",
+                "openai_api_key": "",
+                "home_assistant_enabled": False,
+                "home_assistant_url": "",
+                "home_assistant_token": "",
+            },
+            user_id=None,
+        )
 
     @patch("api.server.list_registered_devices", return_value=[
         {

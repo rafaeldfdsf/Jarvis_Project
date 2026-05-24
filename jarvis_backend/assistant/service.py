@@ -11,7 +11,7 @@ from threading import Lock
 from uuid import uuid4
 
 from config import MAX_TURNS
-from llm.ollama import call_llm
+from llm.service import call_llm
 from logging_utils import get_logger, log_event
 from memory.extract import extract_user_facts
 from memory.user_memory import (
@@ -571,7 +571,11 @@ class AssistantService:
                 messages.append({"role": "user", "content": user_message})
                 messages.append({"role": "assistant", "content": json.dumps(tool_call, ensure_ascii=False)})
                 messages.append({"role": "tool", "content": json.dumps(executed_tool, ensure_ascii=False)})
-                return response_payload(call_llm(messages), tool_call=tool_call, tool_result=executed_tool)
+                return response_payload(
+                    call_llm(messages, user_id=session_state.user_id),
+                    tool_call=tool_call,
+                    tool_result=executed_tool,
+                )
 
             messages.append({"role": "user", "content": user_message})
             extract_user_facts(user_message, user_id=session_state.user_id)
@@ -580,7 +584,7 @@ class AssistantService:
                 user_id=session_state.user_id,
             )
 
-            first_reply = call_llm(messages)
+            first_reply = call_llm(messages, user_id=session_state.user_id)
             parsed = None
             try:
                 parsed = json.loads(first_reply)
@@ -635,7 +639,7 @@ class AssistantService:
                         messages.append({"role": "assistant", "content": json.dumps(tool_call, ensure_ascii=False)})
                         messages.append({"role": "tool", "content": json.dumps(executed_tool, ensure_ascii=False)})
                         if executed_tool.get("ok"):
-                            reply = call_llm(messages)
+                            reply = call_llm(messages, user_id=session_state.user_id)
                         else:
                             reply = f"Nao consegui executar: {executed_tool.get('data')}"
                 except Exception as exc:
