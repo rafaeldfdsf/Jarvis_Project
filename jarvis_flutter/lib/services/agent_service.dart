@@ -98,6 +98,8 @@ class AgentHealthStatus {
   final String? wakeWordPhrase;
   final int? wakeWordSensitivity;
   final int? wakeWordThreshold;
+  final String? wakeWordInputDeviceId;
+  final String? wakeWordInputDeviceLabel;
 
   const AgentHealthStatus({
     required this.ok,
@@ -107,6 +109,8 @@ class AgentHealthStatus {
     this.wakeWordPhrase,
     this.wakeWordSensitivity,
     this.wakeWordThreshold,
+    this.wakeWordInputDeviceId,
+    this.wakeWordInputDeviceLabel,
   });
 
   factory AgentHealthStatus.fromJson(Map<String, dynamic>? json) {
@@ -118,6 +122,8 @@ class AgentHealthStatus {
       wakeWordPhrase: json?['wake_word_phrase']?.toString(),
       wakeWordSensitivity: (json?['wake_word_sensitivity'] as num?)?.toInt(),
       wakeWordThreshold: (json?['wake_word_threshold'] as num?)?.toInt(),
+      wakeWordInputDeviceId: json?['wake_word_input_device_id']?.toString(),
+      wakeWordInputDeviceLabel: json?['wake_word_input_device_label']?.toString(),
     );
   }
 }
@@ -174,15 +180,25 @@ class AgentService {
   Future<AgentWakeWordStartResult> startWakeWord({
     String? keyword,
     int? sensitivity,
+    String? inputDeviceId,
+    String? inputDeviceLabel,
   }) async {
     try {
       final payload = <String, dynamic>{};
       final cleanKeyword = keyword?.trim() ?? '';
+      final cleanInputDeviceId = inputDeviceId?.trim() ?? '';
+      final cleanInputDeviceLabel = inputDeviceLabel?.trim() ?? '';
       if (cleanKeyword.isNotEmpty) {
         payload['keyword'] = cleanKeyword;
       }
       if (sensitivity != null) {
         payload['sensitivity'] = sensitivity;
+      }
+      if (cleanInputDeviceId.isNotEmpty) {
+        payload['input_device_id'] = cleanInputDeviceId;
+      }
+      if (cleanInputDeviceLabel.isNotEmpty) {
+        payload['input_device_label'] = cleanInputDeviceLabel;
       }
 
       final res = await http

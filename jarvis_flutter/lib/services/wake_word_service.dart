@@ -22,6 +22,8 @@ class WakeWordService {
     required Future<void> Function(String? seededTranscript) onWakeWordDetected,
     String keyword = AppSettingsService.defaultAssistantName,
     int sensitivity = 40,
+    String inputDeviceId = '',
+    String inputDeviceLabel = '',
   }) async {
     if (_running) {
       return true;
@@ -41,6 +43,8 @@ class WakeWordService {
     final startResult = await _agentService.startWakeWord(
       keyword: cleanKeyword,
       sensitivity: sensitivity,
+      inputDeviceId: inputDeviceId,
+      inputDeviceLabel: inputDeviceLabel,
     );
     if (!startResult.ok) {
       final failureMessage = await _resolveStartErrorMessage(startResult);

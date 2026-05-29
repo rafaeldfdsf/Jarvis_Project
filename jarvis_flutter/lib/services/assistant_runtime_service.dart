@@ -15,16 +15,22 @@ class AssistantRuntimeService extends ChangeNotifier {
             AppSettingsService().load(force: force),
         readWakeWordPhrase: () => AppSettingsService().wakeWordPhrase,
         readWakeWordSensitivity: () => AppSettingsService().wakeWordSensitivity,
+        readMicrophoneDeviceId: () => AppSettingsService().microphoneDeviceId,
+        readMicrophoneDeviceLabel: () => AppSettingsService().microphoneDeviceLabel,
         startWakeWordListening:
             ({
               required onWakeWordDetected,
               required keyword,
               required sensitivity,
+              required inputDeviceId,
+              required inputDeviceLabel,
             }) {
               return WakeWordService().startListening(
                 onWakeWordDetected: onWakeWordDetected,
                 keyword: keyword,
                 sensitivity: sensitivity,
+                inputDeviceId: inputDeviceId,
+                inputDeviceLabel: inputDeviceLabel,
               );
             },
         cancelWakeWordListening: () => WakeWordService().cancel(),
@@ -43,11 +49,15 @@ class AssistantRuntimeService extends ChangeNotifier {
     required Future<void> Function({bool force}) loadSettings,
     required String Function() readWakeWordPhrase,
     required int Function() readWakeWordSensitivity,
+    required String Function() readMicrophoneDeviceId,
+    required String Function() readMicrophoneDeviceLabel,
     required Future<bool> Function({
       required Future<void> Function(String? seededTranscript)
       onWakeWordDetected,
       required String keyword,
       required int sensitivity,
+      required String inputDeviceId,
+      required String inputDeviceLabel,
     })
     startWakeWordListening,
     required Future<void> Function() cancelWakeWordListening,
@@ -58,6 +68,8 @@ class AssistantRuntimeService extends ChangeNotifier {
        _loadSettings = loadSettings,
        _readWakeWordPhrase = readWakeWordPhrase,
        _readWakeWordSensitivity = readWakeWordSensitivity,
+       _readMicrophoneDeviceId = readMicrophoneDeviceId,
+       _readMicrophoneDeviceLabel = readMicrophoneDeviceLabel,
        _startWakeWordListening = startWakeWordListening,
        _cancelWakeWordListening = cancelWakeWordListening,
        _stopWakeWordListening = stopWakeWordListening,
@@ -70,11 +82,15 @@ class AssistantRuntimeService extends ChangeNotifier {
     required Future<void> Function({bool force}) loadSettings,
     required String Function() readWakeWordPhrase,
     required int Function() readWakeWordSensitivity,
+    required String Function() readMicrophoneDeviceId,
+    required String Function() readMicrophoneDeviceLabel,
     required Future<bool> Function({
       required Future<void> Function(String? seededTranscript)
       onWakeWordDetected,
       required String keyword,
       required int sensitivity,
+      required String inputDeviceId,
+      required String inputDeviceLabel,
     })
     startWakeWordListening,
     required Future<void> Function() cancelWakeWordListening,
@@ -87,6 +103,8 @@ class AssistantRuntimeService extends ChangeNotifier {
       loadSettings: loadSettings,
       readWakeWordPhrase: readWakeWordPhrase,
       readWakeWordSensitivity: readWakeWordSensitivity,
+      readMicrophoneDeviceId: readMicrophoneDeviceId,
+      readMicrophoneDeviceLabel: readMicrophoneDeviceLabel,
       startWakeWordListening: startWakeWordListening,
       cancelWakeWordListening: cancelWakeWordListening,
       stopWakeWordListening: stopWakeWordListening,
@@ -99,10 +117,14 @@ class AssistantRuntimeService extends ChangeNotifier {
   final Future<void> Function({bool force}) _loadSettings;
   final String Function() _readWakeWordPhrase;
   final int Function() _readWakeWordSensitivity;
+  final String Function() _readMicrophoneDeviceId;
+  final String Function() _readMicrophoneDeviceLabel;
   final Future<bool> Function({
     required Future<void> Function(String? seededTranscript) onWakeWordDetected,
     required String keyword,
     required int sensitivity,
+    required String inputDeviceId,
+    required String inputDeviceLabel,
   })
   _startWakeWordListening;
   final Future<void> Function() _cancelWakeWordListening;
@@ -118,6 +140,8 @@ class AssistantRuntimeService extends ChangeNotifier {
   bool _wakeWordReady = false;
   String _lastWakeWordPhrase = AppSettingsService.defaultAssistantName;
   int _lastWakeWordSensitivity = 40;
+  String _lastMicrophoneDeviceId = '';
+  String _lastMicrophoneDeviceLabel = '';
 
   bool get wakeWordEnabled => _wakeWordEnabled;
   bool get wakeWordReady => _wakeWordReady;
@@ -133,6 +157,8 @@ class AssistantRuntimeService extends ChangeNotifier {
     await _loadSettings();
     _lastWakeWordPhrase = _readWakeWordPhrase();
     _lastWakeWordSensitivity = _readWakeWordSensitivity();
+    _lastMicrophoneDeviceId = _readMicrophoneDeviceId();
+    _lastMicrophoneDeviceLabel = _readMicrophoneDeviceLabel();
     _settingsListenable.addListener(_handleSettingsChanged);
     _initialized = true;
     _initializing = false;
@@ -156,6 +182,8 @@ class AssistantRuntimeService extends ChangeNotifier {
     await _loadSettings(force: true);
     _lastWakeWordPhrase = _readWakeWordPhrase();
     _lastWakeWordSensitivity = _readWakeWordSensitivity();
+    _lastMicrophoneDeviceId = _readMicrophoneDeviceId();
+    _lastMicrophoneDeviceLabel = _readMicrophoneDeviceLabel();
     notifyListeners();
 
     if (_initialized) {
@@ -207,6 +235,8 @@ class AssistantRuntimeService extends ChangeNotifier {
       onWakeWordDetected: _handleWakeWordDetected,
       keyword: _readWakeWordPhrase(),
       sensitivity: _readWakeWordSensitivity(),
+      inputDeviceId: _readMicrophoneDeviceId(),
+      inputDeviceLabel: _readMicrophoneDeviceLabel(),
     );
 
     if (_wakeWordReady != started) {
@@ -230,13 +260,19 @@ class AssistantRuntimeService extends ChangeNotifier {
   void _handleSettingsChanged() {
     final updatedWakeWordPhrase = _readWakeWordPhrase();
     final updatedWakeWordSensitivity = _readWakeWordSensitivity();
+    final updatedMicrophoneDeviceId = _readMicrophoneDeviceId();
+    final updatedMicrophoneDeviceLabel = _readMicrophoneDeviceLabel();
     if (_lastWakeWordPhrase == updatedWakeWordPhrase &&
-        _lastWakeWordSensitivity == updatedWakeWordSensitivity) {
+        _lastWakeWordSensitivity == updatedWakeWordSensitivity &&
+        _lastMicrophoneDeviceId == updatedMicrophoneDeviceId &&
+        _lastMicrophoneDeviceLabel == updatedMicrophoneDeviceLabel) {
       return;
     }
 
     _lastWakeWordPhrase = updatedWakeWordPhrase;
     _lastWakeWordSensitivity = updatedWakeWordSensitivity;
+    _lastMicrophoneDeviceId = updatedMicrophoneDeviceId;
+    _lastMicrophoneDeviceLabel = updatedMicrophoneDeviceLabel;
     if (_wakeWordEnabled && !_captureInProgress) {
       unawaited(ensureWakeWordListening(forceRestart: true));
     }

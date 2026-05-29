@@ -73,6 +73,8 @@ _WAKE_WORD_RUNTIME: dict[str, Any] | None = None
 _WAKE_WORD_RUNTIME_ERROR: str | None = None
 _CURRENT_WAKE_WORD_PHRASE = DEFAULT_WAKE_WORD_PHRASE
 _CURRENT_WAKE_WORD_SENSITIVITY = DEFAULT_WAKE_WORD_SENSITIVITY
+_CURRENT_WAKE_WORD_INPUT_DEVICE_ID = ''
+_CURRENT_WAKE_WORD_INPUT_DEVICE_LABEL = ''
 
 AGENT_DEVICE_ID = (os.getenv('JARVIS_DEVICE_ID') or os.getenv('COMPUTERNAME') or 'pc-windows-01').strip()
 AGENT_DEVICE_NAME = (os.getenv('JARVIS_DEVICE_NAME') or os.getenv('COMPUTERNAME') or AGENT_DEVICE_ID).strip()
@@ -704,6 +706,38 @@ def _load_wake_word_runtime() -> dict[str, Any]:
     return _WAKE_WORD_RUNTIME
 
 
+def _resolve_wake_word_input_device(sd, requested_id: str, requested_label: str) -> tuple[Any | None, str]:
+    clean_id = (requested_id or '').strip()
+    clean_label = (requested_label or '').strip().lower()
+
+    try:
+        devices = sd.query_devices()
+    except Exception:
+        return None, ''
+
+    if clean_id:
+        try:
+            target_index = int(clean_id)
+        except ValueError:
+            target_index = None
+        if target_index is not None:
+            for device in devices:
+                if int(device['index']) == target_index and int(device['max_input_channels']) > 0:
+                    return target_index, str(device['name']).strip()
+
+    if clean_label:
+        for device in devices:
+            device_name = str(device['name']).strip()
+            if int(device['max_input_channels']) <= 0:
+                continue
+            normalized_name = _fold_text(device_name.lower())
+            normalized_label = _fold_text(clean_label)
+            if normalized_label and normalized_label in normalized_name:
+                return int(device['index']), device_name
+
+    return None, ''
+
+
 def _wait_for_wake_word(stop_event: threading.Event) -> dict[str, Any] | None:
     runtime = _load_wake_word_runtime()
     wake_word_phrase = _CURRENT_WAKE_WORD_PHRASE
@@ -715,6 +749,11 @@ def _wait_for_wake_word(stop_event: threading.Event) -> dict[str, Any] | None:
     vad_model = runtime['vad_model']
     get_speech_timestamps = runtime['get_speech_timestamps']
     fuzz = runtime['fuzz']
+    input_device, resolved_input_device_label = _resolve_wake_word_input_device(
+        sd,
+        _CURRENT_WAKE_WORD_INPUT_DEVICE_ID,
+        _CURRENT_WAKE_WORD_INPUT_DEVICE_LABEL,
+    )
 
     audio_queue: 'queue.Queue[Any]' = queue.Queue()
     audio_buffer: list[Any] = []
@@ -734,6 +773,7 @@ def _wait_for_wake_word(stop_event: threading.Event) -> dict[str, Any] | None:
         channels=1,
         dtype='float32',
         blocksize=BLOCKSIZE,
+        device=input_device,
         callback=callback,
     ):
         while not stop_event.is_set():
@@ -799,6 +839,7 @@ def _wait_for_wake_word(stop_event: threading.Event) -> dict[str, Any] | None:
                         'transcript': normalized,
                         'raw_transcript': raw_text,
                         'score': score,
+                        'input_device_label': resolved_input_device_label or _CURRENT_WAKE_WORD_INPUT_DEVICE_LABEL,
                     }
 
     return None
@@ -967,6 +1008,8 @@ def health() -> dict[str, Any]:
         'wake_word_phrase': _CURRENT_WAKE_WORD_PHRASE,
         'wake_word_sensitivity': _CURRENT_WAKE_WORD_SENSITIVITY,
         'wake_word_threshold': _score_threshold_for_sensitivity(_CURRENT_WAKE_WORD_SENSITIVITY),
+        'wake_word_input_device_id': _CURRENT_WAKE_WORD_INPUT_DEVICE_ID,
+        'wake_word_input_device_label': _CURRENT_WAKE_WORD_INPUT_DEVICE_LABEL,
     }
 
 
@@ -978,11 +1021,16 @@ def start_wake_word(data: dict[str, Any] | None = Body(default=None)) -> dict[st
     requested_sensitivity = _sanitize_wake_word_sensitivity(
         (data or {}).get('sensitivity')
     )
+    requested_input_device_id = str((data or {}).get('input_device_id') or '').strip()
+    requested_input_device_label = str((data or {}).get('input_device_label') or '').strip()
 
     with _WAKE_WORD_LOCK:
         global _CURRENT_WAKE_WORD_PHRASE, _CURRENT_WAKE_WORD_SENSITIVITY
+        global _CURRENT_WAKE_WORD_INPUT_DEVICE_ID, _CURRENT_WAKE_WORD_INPUT_DEVICE_LABEL
         _CURRENT_WAKE_WORD_PHRASE = requested_phrase
         _CURRENT_WAKE_WORD_SENSITIVITY = requested_sensitivity
+        _CURRENT_WAKE_WORD_INPUT_DEVICE_ID = requested_input_device_id
+        _CURRENT_WAKE_WORD_INPUT_DEVICE_LABEL = requested_input_device_label
 
         if _is_wake_word_running():
             return {
@@ -991,6 +1039,8 @@ def start_wake_word(data: dict[str, Any] | None = Body(default=None)) -> dict[st
                 'engine': WAKE_WORD_ENGINE,
                 'keyword': _CURRENT_WAKE_WORD_PHRASE,
                 'sensitivity': _CURRENT_WAKE_WORD_SENSITIVITY,
+                'input_device_id': _CURRENT_WAKE_WORD_INPUT_DEVICE_ID,
+                'input_device_label': _CURRENT_WAKE_WORD_INPUT_DEVICE_LABEL,
             }
 
         try:
@@ -1018,6 +1068,8 @@ def start_wake_word(data: dict[str, Any] | None = Body(default=None)) -> dict[st
             'engine': WAKE_WORD_ENGINE,
             'keyword': _CURRENT_WAKE_WORD_PHRASE,
             'sensitivity': _CURRENT_WAKE_WORD_SENSITIVITY,
+            'input_device_id': _CURRENT_WAKE_WORD_INPUT_DEVICE_ID,
+            'input_device_label': _CURRENT_WAKE_WORD_INPUT_DEVICE_LABEL,
         }
 
 

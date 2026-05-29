@@ -5,6 +5,24 @@ import agent
 
 
 class AgentYoutubeTests(unittest.TestCase):
+    def test_resolve_wake_word_input_device_prefers_requested_label(self):
+        class _FakeSd:
+            @staticmethod
+            def query_devices():
+                return [
+                    {'index': 1, 'name': 'SteelSeries Sonar - Microphone', 'max_input_channels': 2},
+                    {'index': 2, 'name': 'Microfone Realtek', 'max_input_channels': 2},
+                ]
+
+        device, label = agent._resolve_wake_word_input_device(
+            _FakeSd,
+            '',
+            'Microfone Realtek',
+        )
+
+        self.assertEqual(device, 2)
+        self.assertEqual(label, 'Microfone Realtek')
+
     def test_extract_youtube_video_ids_keeps_unique_order(self):
         html = '''
         {"videoId":"AAAAAAAAAAA"}

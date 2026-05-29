@@ -6,10 +6,14 @@ class _FakeSettings extends ChangeNotifier {
   _FakeSettings({
     this.wakeWordPhrase = 'Jarvis',
     this.wakeWordSensitivity = 40,
+    this.microphoneDeviceId = '',
+    this.microphoneDeviceLabel = '',
   });
 
   String wakeWordPhrase;
   int wakeWordSensitivity;
+  String microphoneDeviceId;
+  String microphoneDeviceLabel;
   int loadCalls = 0;
   bool lastForce = false;
 
@@ -18,12 +22,23 @@ class _FakeSettings extends ChangeNotifier {
     lastForce = force;
   }
 
-  void update({String? wakeWordPhrase, int? wakeWordSensitivity}) {
+  void update({
+    String? wakeWordPhrase,
+    int? wakeWordSensitivity,
+    String? microphoneDeviceId,
+    String? microphoneDeviceLabel,
+  }) {
     if (wakeWordPhrase != null) {
       this.wakeWordPhrase = wakeWordPhrase;
     }
     if (wakeWordSensitivity != null) {
       this.wakeWordSensitivity = wakeWordSensitivity;
+    }
+    if (microphoneDeviceId != null) {
+      this.microphoneDeviceId = microphoneDeviceId;
+    }
+    if (microphoneDeviceLabel != null) {
+      this.microphoneDeviceLabel = microphoneDeviceLabel;
     }
     notifyListeners();
   }
@@ -36,21 +51,29 @@ void main() {
     var cancelCalls = 0;
     String? capturedKeyword;
     int? capturedSensitivity;
+    String? capturedInputDeviceId;
+    String? capturedInputDeviceLabel;
 
     final runtime = AssistantRuntimeService.test(
       settingsListenable: settings,
       loadSettings: settings.load,
       readWakeWordPhrase: () => settings.wakeWordPhrase,
       readWakeWordSensitivity: () => settings.wakeWordSensitivity,
+      readMicrophoneDeviceId: () => settings.microphoneDeviceId,
+      readMicrophoneDeviceLabel: () => settings.microphoneDeviceLabel,
       startWakeWordListening:
           ({
             required onWakeWordDetected,
             required keyword,
             required sensitivity,
+            required inputDeviceId,
+            required inputDeviceLabel,
           }) async {
             startCalls += 1;
             capturedKeyword = keyword;
             capturedSensitivity = sensitivity;
+            capturedInputDeviceId = inputDeviceId;
+            capturedInputDeviceLabel = inputDeviceLabel;
             return true;
           },
       cancelWakeWordListening: () async {
@@ -73,6 +96,8 @@ void main() {
     expect(runtime.wakeWordPhrase, 'Jarvis');
     expect(capturedKeyword, 'Jarvis');
     expect(capturedSensitivity, 40);
+    expect(capturedInputDeviceId, '');
+    expect(capturedInputDeviceLabel, '');
     runtime.dispose();
   });
 
@@ -86,11 +111,15 @@ void main() {
       loadSettings: settings.load,
       readWakeWordPhrase: () => settings.wakeWordPhrase,
       readWakeWordSensitivity: () => settings.wakeWordSensitivity,
+      readMicrophoneDeviceId: () => settings.microphoneDeviceId,
+      readMicrophoneDeviceLabel: () => settings.microphoneDeviceLabel,
       startWakeWordListening:
           ({
             required onWakeWordDetected,
             required keyword,
             required sensitivity,
+            required inputDeviceId,
+            required inputDeviceLabel,
           }) async {
             startCalls += 1;
             return true;
@@ -121,6 +150,7 @@ void main() {
     final settings = _FakeSettings();
     final startedKeywords = <String>[];
     final startedSensitivities = <int>[];
+    final startedInputDeviceIds = <String>[];
     var cancelCalls = 0;
 
     final runtime = AssistantRuntimeService.test(
@@ -128,14 +158,19 @@ void main() {
       loadSettings: settings.load,
       readWakeWordPhrase: () => settings.wakeWordPhrase,
       readWakeWordSensitivity: () => settings.wakeWordSensitivity,
+      readMicrophoneDeviceId: () => settings.microphoneDeviceId,
+      readMicrophoneDeviceLabel: () => settings.microphoneDeviceLabel,
       startWakeWordListening:
           ({
             required onWakeWordDetected,
             required keyword,
             required sensitivity,
+            required inputDeviceId,
+            required inputDeviceLabel,
           }) async {
             startedKeywords.add(keyword);
             startedSensitivities.add(sensitivity);
+            startedInputDeviceIds.add(inputDeviceId);
             return true;
           },
       cancelWakeWordListening: () async {
@@ -148,12 +183,18 @@ void main() {
 
     await runtime.initialize();
     await runtime.setAuthenticated(true);
-    settings.update(wakeWordPhrase: 'Friday', wakeWordSensitivity: 72);
+    settings.update(
+      wakeWordPhrase: 'Friday',
+      wakeWordSensitivity: 72,
+      microphoneDeviceId: 'mic-2',
+      microphoneDeviceLabel: 'Headset Mic',
+    );
     await Future<void>.delayed(Duration.zero);
 
     expect(cancelCalls, 2);
     expect(startedKeywords, <String>['Jarvis', 'Friday']);
     expect(startedSensitivities, <int>[40, 72]);
+    expect(startedInputDeviceIds, <String>['', 'mic-2']);
     runtime.dispose();
   });
 
@@ -170,11 +211,15 @@ void main() {
         loadSettings: settings.load,
         readWakeWordPhrase: () => settings.wakeWordPhrase,
         readWakeWordSensitivity: () => settings.wakeWordSensitivity,
+        readMicrophoneDeviceId: () => settings.microphoneDeviceId,
+        readMicrophoneDeviceLabel: () => settings.microphoneDeviceLabel,
         startWakeWordListening:
             ({
               required onWakeWordDetected,
               required keyword,
               required sensitivity,
+              required inputDeviceId,
+              required inputDeviceLabel,
             }) async {
               detectedCallback = onWakeWordDetected;
               return true;
