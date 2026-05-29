@@ -13,6 +13,8 @@ import '../services/assistant_runtime_service.dart';
 import '../services/api_service.dart';
 import '../services/app_settings_service.dart';
 import '../services/app_shell_service.dart';
+import '../services/client_action_feedback.dart';
+import '../services/continuous_conversation_service.dart';
 import '../services/conversation_service.dart';
 import '../services/memory_service.dart';
 import '../services/tts_service.dart';
@@ -41,6 +43,8 @@ class _VoiceAssistantScreenState extends State<VoiceAssistantScreen> {
   final AppSettingsService settings = AppSettingsService();
   final AppShellService shellService = AppShellService();
   final ConversationService conversation = ConversationService();
+  final ContinuousConversationService continuousConversationService =
+      const ContinuousConversationService();
   final VoiceService voiceService = VoiceService();
   final TtsService ttsService = TtsService();
   final ActivityHistoryService activityHistory = ActivityHistoryService();
@@ -59,20 +63,6 @@ class _VoiceAssistantScreenState extends State<VoiceAssistantScreen> {
 
   static const Duration _overlayResponseDismissDelay = Duration(seconds: 4);
   static const Duration _overlayIdleDismissDelay = Duration(seconds: 8);
-
-  static const Set<String> _continuousStopPhrases = <String>{
-    'parar escuta',
-    'para escuta',
-    'parar conversa',
-    'terminar conversa',
-    'desligar conversa continua',
-    'desliga conversa continua',
-    'parar de ouvir',
-    'deixa de ouvir',
-    'podes parar',
-    'pode parar',
-    'ja podes parar',
-  };
 
   String get _assistantName => settings.assistantName;
   String get _wakeWordPhrase => settings.wakeWordPhrase;
@@ -367,8 +357,11 @@ class _VoiceAssistantScreenState extends State<VoiceAssistantScreen> {
     List<int> wavBytes, {
     required bool isFollowUp,
   }) async {
-    if ((!_continuousConversationEnabled && !isFollowUp) ||
-        widget.overlayOnly) {
+    if (!continuousConversationService.shouldInterceptStopCommand(
+      continuousConversationEnabled: _continuousConversationEnabled,
+      isFollowUp: isFollowUp,
+      overlayOnly: widget.overlayOnly,
+    )) {
       return false;
     }
 
@@ -381,7 +374,7 @@ class _VoiceAssistantScreenState extends State<VoiceAssistantScreen> {
       return false;
     }
 
-    if (!_isContinuousStopCommand(transcript)) {
+    if (!continuousConversationService.isStopCommand(transcript)) {
       return false;
     }
 
@@ -405,17 +398,7 @@ class _VoiceAssistantScreenState extends State<VoiceAssistantScreen> {
   }
 
   bool _isContinuousStopCommand(String transcript) {
-    final normalized = _normalizeCommandText(transcript);
-    if (normalized.isEmpty) {
-      return false;
-    }
-
-    for (final phrase in _continuousStopPhrases) {
-      if (normalized.contains(phrase)) {
-        return true;
-      }
-    }
-    return false;
+    return continuousConversationService.isStopCommand(transcript);
   }
 
   String _normalizeCommandText(String input) {
@@ -492,6 +475,7 @@ class _VoiceAssistantScreenState extends State<VoiceAssistantScreen> {
               action.arguments['window_title']?.toString() ??
               action.action,
         );
+        _appendClientActionFailure(action, result.ok, result.error);
         return;
       }
 
@@ -507,6 +491,7 @@ class _VoiceAssistantScreenState extends State<VoiceAssistantScreen> {
           detail: result.error,
           resolvedTarget: result.app ?? result.url ?? action.appName,
         );
+        _appendClientActionFailure(action, result.ok, result.error);
         return;
       }
 
@@ -522,6 +507,7 @@ class _VoiceAssistantScreenState extends State<VoiceAssistantScreen> {
           detail: result.error,
           resolvedTarget: result.url ?? action.url,
         );
+        _appendClientActionFailure(action, result.ok, result.error);
         return;
       }
     }
@@ -537,6 +523,7 @@ class _VoiceAssistantScreenState extends State<VoiceAssistantScreen> {
         success: opened,
         resolvedTarget: action.url,
       );
+      _appendClientActionFailure(action, opened, null);
       return;
     }
 
@@ -552,7 +539,23 @@ class _VoiceAssistantScreenState extends State<VoiceAssistantScreen> {
         detail: 'A app nao abriu localmente; foi aberta uma pesquisa web.',
         resolvedTarget: fallbackUrl,
       );
+      _appendClientActionFailure(action, opened, null);
     }
+  }
+
+  void _appendClientActionFailure(
+    ClientAction action,
+    bool success,
+    String? detail,
+  ) {
+    if (success) {
+      return;
+    }
+
+    conversation.appendLocalExchange(
+      userText: '',
+      assistantReply: buildClientActionFailureMessage(action, detail: detail),
+    );
   }
 
   Future<void> _recordResponseHistory(ChatResponseModel response) async {

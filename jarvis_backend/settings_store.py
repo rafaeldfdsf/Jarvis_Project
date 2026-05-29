@@ -200,7 +200,10 @@ def load_settings_values(user_id: str | None = None) -> dict[str, str]:
     values["ollama_model"] = values.get("ollama_model", "").strip() or SETTINGS_DEFAULTS["ollama_model"]
     values["openai_model"] = values.get("openai_model", "").strip() or SETTINGS_DEFAULTS["openai_model"]
     values["openai_api_key"] = values.get("openai_api_key", "").strip()
-    values["name"] = user_name
+    if user_name:
+        values["name"] = user_name
+    else:
+        values.pop("name", None)
     return values
 
 

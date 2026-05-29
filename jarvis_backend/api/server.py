@@ -467,6 +467,21 @@ async def _dispatch_client_action_to_agent(
         target_device_id=target_device_id,
     )
     if not dispatch_result.get('ok'):
+        error_message = str(dispatch_result.get('error') or '').strip()
+        if error_message == 'Nenhum agente executor ligado com capacidade desktop.control.':
+            return response
+
+        response['client_action'] = None
+        response['reply'] = (
+            f'Tentei executar isso no dispositivo, mas falhou. {error_message}'
+            if error_message
+            else 'Tentei executar isso no dispositivo, mas falhou.'
+        )
+        response['tool_result'] = {
+            'tool_name': action_name,
+            'ok': False,
+            'data': dispatch_result,
+        }
         return response
 
     response['client_action'] = None
@@ -521,10 +536,13 @@ def put_memory_entry(memory_key: str, payload: MemoryUpdateRequest, auth: AuthCo
 
 @app.delete('/memory/{memory_key}')
 def remove_memory_entry(memory_key: str, auth: AuthContext = Depends(get_auth_context)):
-    deleted = delete_memory_entry(memory_key, user_id=auth.user_id)
-    if not deleted:
-        raise HTTPException(status_code=404, detail=f'Memoria nao encontrada: {memory_key}')
-    return {'deleted': True}
+    try:
+        deleted = delete_memory_entry(memory_key, user_id=auth.user_id)
+        if not deleted:
+            raise HTTPException(status_code=404, detail=f'Memoria nao encontrada: {memory_key}')
+        return {'deleted': True}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.delete('/memory')

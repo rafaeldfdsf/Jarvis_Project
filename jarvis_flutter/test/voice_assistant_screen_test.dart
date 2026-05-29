@@ -36,6 +36,21 @@ void main() {
       await tester.pump(const Duration(milliseconds: 250));
 
       expect(find.text('Conversa continua ligada'), findsOneWidget);
+      expect(
+        find.text("Diz 'parar conversa' para sair da escuta continua."),
+        findsOneWidget,
+      );
+
+      await tester.tap(find.text('Conversa continua ligada'));
+      await tester.pump(const Duration(milliseconds: 250));
+
+      expect(find.text('Conversa continua desligada'), findsOneWidget);
+      expect(
+        find.text(
+          'Ativa a conversa continua para falar sem repetir a wake word.',
+        ),
+        findsOneWidget,
+      );
     },
   );
 }

@@ -97,6 +97,48 @@ void main() {
   );
 
   test(
+    'ConversationService mantém a mesma sessao ao longo de varios follow-ups',
+    () async {
+      final api = _FakeConversationApiService();
+      final service = ConversationService.test(api: api);
+
+      final firstVoice = await service.sendVoiceTurn(
+        Uint8List.fromList(<int>[1, 2, 3]),
+        platform: 'windows',
+        locale: 'pt-PT',
+      );
+      final secondVoice = await service.sendVoiceTurn(
+        Uint8List.fromList(<int>[4, 5, 6]),
+        platform: 'windows',
+        locale: 'pt-PT',
+      );
+      final textResponse = await service.sendTextMessage('e continua');
+
+      expect(firstVoice.reply, 'Resposta ao audio');
+      expect(secondVoice.reply, 'Resposta ao audio');
+      expect(textResponse.reply, 'Resposta ao texto: e continua');
+      expect(api.createSessionCalls, 1);
+      expect(api.sendVoiceTurnCalls, 2);
+      expect(api.sendMessageCalls, 1);
+      expect(
+        api.seenSessionIds,
+        everyElement('sess-voice-chat'),
+      );
+      expect(
+        service.messages.map((item) => item.text).toList(),
+        <String>[
+          'transcricao de voz',
+          'Resposta ao audio',
+          'transcricao de voz',
+          'Resposta ao audio',
+          'e continua',
+          'Resposta ao texto: e continua',
+        ],
+      );
+    },
+  );
+
+  test(
     'appendLocalExchange adiciona utilizador e assistente na ordem certa',
     () {
       final service = ConversationService.test(
@@ -113,6 +155,24 @@ void main() {
       expect(service.messages.first.isUser, isTrue);
       expect(service.messages.last.text, 'Conversa continua desligada.');
       expect(service.messages.last.isUser, isFalse);
+    },
+  );
+
+  test(
+    'appendLocalExchange permite acrescentar apenas a resposta local do assistente',
+    () {
+      final service = ConversationService.test(
+        api: _FakeConversationApiService(),
+      );
+
+      service.appendLocalExchange(
+        userText: '',
+        assistantReply: 'Nao consegui executar essa acao no dispositivo.',
+      );
+
+      expect(service.messages.length, 1);
+      expect(service.messages.single.text, 'Nao consegui executar essa acao no dispositivo.');
+      expect(service.messages.single.isUser, isFalse);
     },
   );
 

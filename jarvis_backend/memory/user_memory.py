@@ -10,18 +10,34 @@ Nao contem logica de NLP.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from db_utils import connect
-from settings_store import SETTINGS_DEFAULTS, load_settings_values, update_settings
+from settings_store import (
+    SETTINGS_DEFAULTS,
+    _ensure_settings_schema,
+    _normalize_setting_value,
+    load_settings_values,
+)
 
 
 def _connect():
     return connect()
 
 
-def _user_filter_sql(user_id: str | None) -> tuple[str, tuple[object, ...]]:
-    if user_id is None:
-        return "user_id IS NULL", ()
-    return "user_id = ?", ((user_id or "").strip(),)
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _clean_user_id(user_id: str | None) -> str | None:
+    return (user_id or "").strip() or None
+
+
+def _user_filter_sql(user_id: str | None, *, column: str = "user_id") -> tuple[str, tuple[object, ...]]:
+    clean_user_id = _clean_user_id(user_id)
+    if clean_user_id is None:
+        return f"{column} IS NULL", ()
+    return f"{column} = ?", (clean_user_id,)
 
 
 def _table_columns(cursor, table_name: str) -> set[str]:
@@ -29,62 +45,162 @@ def _table_columns(cursor, table_name: str) -> set[str]:
     return {row["name"] for row in cursor.fetchall()}
 
 
-def _ensure_memory_schema(cursor) -> None:
+def _table_exists(cursor, table_name: str) -> bool:
     cursor.execute(
         """
-        CREATE TABLE IF NOT EXISTS user_memory (
+        SELECT name
+        FROM sqlite_master
+        WHERE type = 'table' AND name = ?
+        """,
+        (table_name,),
+    )
+    return cursor.fetchone() is not None
+
+
+def _ensure_facts_schema(cursor) -> None:
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS user_facts (
             user_id TEXT,
             key TEXT NOT NULL,
             value TEXT,
+            updated_at TEXT NOT NULL,
             PRIMARY KEY (user_id, key)
         )
         """
     )
 
-    columns = _table_columns(cursor, "user_memory")
-    if "user_id" in columns:
+
+def _ensure_preferences_schema(cursor) -> None:
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS user_preferences (
+            user_id TEXT,
+            sort_order INTEGER NOT NULL,
+            value TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (user_id, sort_order)
+        )
+        """
+    )
+
+
+def _ensure_reminders_schema(cursor) -> None:
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS user_reminders (
+            user_id TEXT,
+            sort_order INTEGER NOT NULL,
+            value TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (user_id, sort_order)
+        )
+        """
+    )
+
+
+def _extract_sort_order(key: str, prefix: str) -> int | None:
+    if not key.startswith(prefix):
+        return None
+    suffix = key.removeprefix(prefix)
+    if suffix.isdigit():
+        return int(suffix)
+    return None
+
+
+def _migrate_legacy_user_memory(cursor) -> None:
+    if not _table_exists(cursor, "user_memory"):
         return
 
-    cursor.execute("ALTER TABLE user_memory RENAME TO user_memory_legacy")
-    cursor.execute(
-        """
-        CREATE TABLE user_memory (
-            user_id TEXT,
-            key TEXT NOT NULL,
-            value TEXT,
-            PRIMARY KEY (user_id, key)
+    columns = _table_columns(cursor, "user_memory")
+    if {"key", "value"}.difference(columns):
+        cursor.execute("DROP TABLE user_memory")
+        return
+
+    if "user_id" in columns:
+        cursor.execute(
+            """
+            SELECT user_id, key, value
+            FROM user_memory
+            ORDER BY key
+            """
         )
-        """
-    )
-    cursor.execute(
-        """
-        INSERT INTO user_memory (user_id, key, value)
-        SELECT NULL, key, value
-        FROM user_memory_legacy
-        """
-    )
-    cursor.execute("DROP TABLE user_memory_legacy")
+    else:
+        cursor.execute(
+            """
+            SELECT NULL AS user_id, key, value
+            FROM user_memory
+            ORDER BY key
+            """
+        )
 
+    rows = cursor.fetchall()
+    if not rows:
+        cursor.execute("DROP TABLE user_memory")
+        return
 
-def _next_index(prefix, user_id: str | None = None):
-    conn = _connect()
-    c = conn.cursor()
-    where_sql, params = _user_filter_sql(user_id)
-    c.execute(
-        f"SELECT key FROM user_memory WHERE {where_sql} AND key LIKE ?",
-        (*params, f"{prefix}%"),
-    )
-    keys = [row["key"] for row in c.fetchall()]
-    conn.close()
+    _ensure_settings_schema(cursor)
+    now = _utc_now_iso()
 
-    max_index = 0
+    for row in rows:
+        user_id = _clean_user_id(row["user_id"])
+        key = str(row["key"] or "").strip()
+        value = str(row["value"] or "")
+        if not key:
+            continue
 
-    for key in keys:
-        suffix = key.removeprefix(prefix)
-        if suffix.isdigit():
-            max_index = max(max_index, int(suffix))
+        if key in SETTINGS_DEFAULTS:
+            clean_value = _normalize_setting_value(key, value)
+            cursor.execute(
+                "DELETE FROM app_settings WHERE user_id IS ? AND key = ?",
+                (user_id, key),
+            )
+            cursor.execute(
+                """
+                INSERT INTO app_settings (user_id, key, value, updated_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (user_id, key, clean_value, now),
+            )
+            continue
 
-    return max_index + 1
+        preference_order = _extract_sort_order(key, "preference_")
+        if preference_order is not None:
+            cursor.execute(
+                """
+                INSERT INTO user_preferences (user_id, sort_order, value, updated_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(user_id, sort_order)
+                DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+                """,
+                (user_id, preference_order, value, now),
+            )
+            continue
+
+        reminder_order = _extract_sort_order(key, "reminder_")
+        if reminder_order is not None:
+            cursor.execute(
+                """
+                INSERT INTO user_reminders (user_id, sort_order, value, updated_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(user_id, sort_order)
+                DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+                """,
+                (user_id, reminder_order, value, now),
+            )
+            continue
+
+        cursor.execute(
+            """
+            INSERT INTO user_facts (user_id, key, value, updated_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(user_id, key)
+            DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+            """,
+            (user_id, key, value, now),
+        )
+
+    cursor.execute("DROP TABLE user_memory")
 
 
 def _memory_type_from_key(key):
@@ -97,10 +213,9 @@ def _memory_type_from_key(key):
 
 def _memory_index_from_key(key):
     for prefix in ("preference_", "reminder_"):
-        if key.startswith(prefix):
-            suffix = key.removeprefix(prefix)
-            if suffix.isdigit():
-                return int(suffix)
+        suffix = key.removeprefix(prefix)
+        if suffix != key and suffix.isdigit():
+            return int(suffix)
     return None
 
 
@@ -153,25 +268,98 @@ def _memory_label_from_key(key):
     return key.replace("_", " ").strip().title()
 
 
-def _normalize_entry(row):
-    key = row["key"]
-
+def _normalize_entry(key: str, value: str):
     return {
         "key": key,
-        "value": row["value"],
+        "value": value,
         "type": _memory_type_from_key(key),
         "label": _memory_label_from_key(key),
         "index": _memory_index_from_key(key),
     }
 
 
+def _load_fact_rows(cursor, user_id: str | None):
+    where_sql, params = _user_filter_sql(user_id)
+    cursor.execute(
+        f"""
+        SELECT key, value
+        FROM user_facts
+        WHERE {where_sql}
+        ORDER BY key
+        """,
+        params,
+    )
+    return cursor.fetchall()
+
+
+def _load_ordered_value_rows(cursor, table_name: str, user_id: str | None):
+    where_sql, params = _user_filter_sql(user_id)
+    cursor.execute(
+        f"""
+        SELECT sort_order, value
+        FROM {table_name}
+        WHERE {where_sql}
+        ORDER BY sort_order
+        """,
+        params,
+    )
+    return cursor.fetchall()
+
+
+def _next_sort_order(cursor, table_name: str, user_id: str | None) -> int:
+    where_sql, params = _user_filter_sql(user_id)
+    cursor.execute(
+        f"""
+        SELECT COALESCE(MAX(sort_order), 0) + 1 AS next_sort_order
+        FROM {table_name}
+        WHERE {where_sql}
+        """,
+        params,
+    )
+    row = cursor.fetchone()
+    return int(row["next_sort_order"] or 1)
+
+
+def _upsert_fact(cursor, key: str, value: str, user_id: str | None = None) -> None:
+    cursor.execute(
+        """
+        INSERT INTO user_facts (user_id, key, value, updated_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(user_id, key)
+        DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+        """,
+        (_clean_user_id(user_id), key, value, _utc_now_iso()),
+    )
+
+
+def _upsert_ordered_value(
+    cursor,
+    table_name: str,
+    sort_order: int,
+    value: str,
+    user_id: str | None = None,
+) -> None:
+    cursor.execute(
+        f"""
+        INSERT INTO {table_name} (user_id, sort_order, value, updated_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(user_id, sort_order)
+        DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+        """,
+        (_clean_user_id(user_id), sort_order, value, _utc_now_iso()),
+    )
+
+
 def init_db():
     """
-    Cria a base de dados se nao existir.
+    Cria a base de dados se nao existir e migra a memoria legada.
     """
     conn = _connect()
-    c = conn.cursor()
-    _ensure_memory_schema(c)
+    cursor = conn.cursor()
+    _ensure_facts_schema(cursor)
+    _ensure_preferences_schema(cursor)
+    _ensure_reminders_schema(cursor)
+    _migrate_legacy_user_memory(cursor)
     conn.commit()
     conn.close()
 
@@ -182,15 +370,8 @@ def save_fact(key, value, user_id: str | None = None):
     """
     init_db()
     conn = _connect()
-    c = conn.cursor()
-    c.execute(
-        "DELETE FROM user_memory WHERE user_id IS ? AND key = ?",
-        (((user_id or "").strip() or None), key),
-    )
-    c.execute(
-        "INSERT INTO user_memory (user_id, key, value) VALUES (?, ?, ?)",
-        (((user_id or "").strip() or None), key, value),
-    )
+    cursor = conn.cursor()
+    _upsert_fact(cursor, key, value, user_id=user_id)
     conn.commit()
     conn.close()
 
@@ -201,11 +382,14 @@ def save_preference(preference_text, user_id: str | None = None):
     """
     init_db()
     conn = _connect()
-    c = conn.cursor()
-    key = f"preference_{_next_index('preference_', user_id=user_id)}"
-    c.execute(
-        "INSERT INTO user_memory (user_id, key, value) VALUES (?, ?, ?)",
-        (((user_id or "").strip() or None), key, preference_text),
+    cursor = conn.cursor()
+    sort_order = _next_sort_order(cursor, "user_preferences", user_id)
+    _upsert_ordered_value(
+        cursor,
+        "user_preferences",
+        sort_order,
+        preference_text,
+        user_id=user_id,
     )
     conn.commit()
     conn.close()
@@ -217,11 +401,14 @@ def save_reminder(reminder_text, user_id: str | None = None):
     """
     init_db()
     conn = _connect()
-    c = conn.cursor()
-    key = f"reminder_{_next_index('reminder_', user_id=user_id)}"
-    c.execute(
-        "INSERT INTO user_memory (user_id, key, value) VALUES (?, ?, ?)",
-        (((user_id or "").strip() or None), key, reminder_text),
+    cursor = conn.cursor()
+    sort_order = _next_sort_order(cursor, "user_reminders", user_id)
+    _upsert_ordered_value(
+        cursor,
+        "user_reminders",
+        sort_order,
+        reminder_text,
+        user_id=user_id,
     )
     conn.commit()
     conn.close()
@@ -233,10 +420,10 @@ def delete_fact(key, user_id: str | None = None):
     """
     init_db()
     conn = _connect()
-    c = conn.cursor()
-    c.execute(
-        "DELETE FROM user_memory WHERE user_id IS ? AND key = ?",
-        (((user_id or "").strip() or None), key),
+    cursor = conn.cursor()
+    cursor.execute(
+        "DELETE FROM user_facts WHERE user_id IS ? AND key = ?",
+        (_clean_user_id(user_id), key),
     )
     conn.commit()
     conn.close()
@@ -248,18 +435,13 @@ def delete_preference(index, user_id: str | None = None):
     """
     init_db()
     conn = _connect()
-    c = conn.cursor()
-    where_sql, params = _user_filter_sql(user_id)
-    c.execute(
-        f"SELECT key FROM user_memory WHERE {where_sql} AND key LIKE 'preference_%'",
-        params,
-    )
-    keys = _sort_memory_keys([row["key"] for row in c.fetchall()])
-    if 1 <= index <= len(keys):
-        key_to_delete = keys[index - 1]
-        c.execute(
-            f"DELETE FROM user_memory WHERE {where_sql} AND key = ?",
-            (*params, key_to_delete),
+    cursor = conn.cursor()
+    rows = _load_ordered_value_rows(cursor, "user_preferences", user_id)
+    if 1 <= index <= len(rows):
+        sort_order = int(rows[index - 1]["sort_order"])
+        cursor.execute(
+            "DELETE FROM user_preferences WHERE user_id IS ? AND sort_order = ?",
+            (_clean_user_id(user_id), sort_order),
         )
         conn.commit()
     conn.close()
@@ -271,18 +453,13 @@ def delete_reminder(index, user_id: str | None = None):
     """
     init_db()
     conn = _connect()
-    c = conn.cursor()
-    where_sql, params = _user_filter_sql(user_id)
-    c.execute(
-        f"SELECT key FROM user_memory WHERE {where_sql} AND key LIKE 'reminder_%'",
-        params,
-    )
-    keys = _sort_memory_keys([row["key"] for row in c.fetchall()])
-    if 1 <= index <= len(keys):
-        key_to_delete = keys[index - 1]
-        c.execute(
-            f"DELETE FROM user_memory WHERE {where_sql} AND key = ?",
-            (*params, key_to_delete),
+    cursor = conn.cursor()
+    rows = _load_ordered_value_rows(cursor, "user_reminders", user_id)
+    if 1 <= index <= len(rows):
+        sort_order = int(rows[index - 1]["sort_order"])
+        cursor.execute(
+            "DELETE FROM user_reminders WHERE user_id IS ? AND sort_order = ?",
+            (_clean_user_id(user_id), sort_order),
         )
         conn.commit()
     conn.close()
@@ -295,33 +472,15 @@ def load_facts(user_id: str | None = None):
     """
     init_db()
     conn = _connect()
-    c = conn.cursor()
-    where_sql, params = _user_filter_sql(user_id)
-    c.execute(f"SELECT key, value FROM user_memory WHERE {where_sql}", params)
-    rows = c.fetchall()
+    cursor = conn.cursor()
+
+    facts = {
+        row["key"]: row["value"]
+        for row in _load_fact_rows(cursor, user_id)
+    }
+    preferences = [row["value"] for row in _load_ordered_value_rows(cursor, "user_preferences", user_id)]
+    reminders = [row["value"] for row in _load_ordered_value_rows(cursor, "user_reminders", user_id)]
     conn.close()
-
-    facts = {}
-    preferences = []
-    reminders = []
-
-    ordered_rows = sorted(
-        ((row["key"], row["value"]) for row in rows),
-        key=lambda item: (
-            _memory_type_from_key(item[0]),
-            _memory_index_from_key(item[0]) is None,
-            _memory_index_from_key(item[0]) or 0,
-            item[0].lower(),
-        ),
-    )
-
-    for key, value in ordered_rows:
-        if key.startswith("preference_"):
-            preferences.append(value)
-        elif key.startswith("reminder_"):
-            reminders.append(value)
-        else:
-            facts[key] = value
 
     for key, value in load_settings_values(user_id=user_id).items():
         facts.setdefault(key, value)
@@ -337,30 +496,26 @@ def list_memory_entries(user_id: str | None = None):
     """
     init_db()
     conn = _connect()
-    c = conn.cursor()
-    where_sql, params = _user_filter_sql(user_id)
-    c.execute(f"SELECT key, value FROM user_memory WHERE {where_sql}", params)
-    rows = c.fetchall()
-    conn.close()
+    cursor = conn.cursor()
 
     entries = [
-        _normalize_entry(row)
-        for row in rows
-        if row["key"] not in SETTINGS_DEFAULTS
+        _normalize_entry(row["key"], row["value"])
+        for row in _load_fact_rows(cursor, user_id)
     ]
 
-    settings_entries = [
-        {
-            "key": key,
-            "value": value,
-            "type": "fact",
-            "label": _memory_label_from_key(key),
-            "index": None,
-        }
-        for key, value in load_settings_values(user_id=user_id).items()
-        if key in SETTINGS_DEFAULTS
-    ]
-    entries.extend(settings_entries)
+    for row in _load_ordered_value_rows(cursor, "user_preferences", user_id):
+        sort_order = int(row["sort_order"])
+        entries.append(
+            _normalize_entry(f"preference_{sort_order}", row["value"])
+        )
+
+    for row in _load_ordered_value_rows(cursor, "user_reminders", user_id):
+        sort_order = int(row["sort_order"])
+        entries.append(
+            _normalize_entry(f"reminder_{sort_order}", row["value"])
+        )
+
+    conn.close()
 
     type_order = {
         "fact": 0,
@@ -390,35 +545,60 @@ def update_memory_entry(key, value, user_id: str | None = None):
         raise ValueError("O valor da memoria nao pode estar vazio.")
 
     if key in SETTINGS_DEFAULTS:
-        update_settings({key: clean_value}, user_id=user_id)
-        return {
-            "key": key,
-            "value": clean_value,
-            "type": "fact",
-            "label": _memory_label_from_key(key),
-            "index": None,
-        }
+        raise ValueError("As configuracoes da conta devem ser alteradas pelo endpoint /settings.")
 
     init_db()
     conn = _connect()
-    c = conn.cursor()
-    c.execute(
-        "DELETE FROM user_memory WHERE user_id IS ? AND key = ?",
-        (((user_id or "").strip() or None), key),
-    )
-    c.execute(
-        "INSERT INTO user_memory (user_id, key, value) VALUES (?, ?, ?)",
-        (((user_id or "").strip() or None), key, clean_value),
-    )
+    cursor = conn.cursor()
+
+    preference_order = _extract_sort_order(key, "preference_")
+    if preference_order is not None:
+        _upsert_ordered_value(
+            cursor,
+            "user_preferences",
+            preference_order,
+            clean_value,
+            user_id=user_id,
+        )
+        conn.commit()
+        conn.close()
+        return {
+            "key": key,
+            "value": clean_value,
+            "type": "preference",
+            "label": _memory_label_from_key(key),
+            "index": preference_order,
+        }
+
+    reminder_order = _extract_sort_order(key, "reminder_")
+    if reminder_order is not None:
+        _upsert_ordered_value(
+            cursor,
+            "user_reminders",
+            reminder_order,
+            clean_value,
+            user_id=user_id,
+        )
+        conn.commit()
+        conn.close()
+        return {
+            "key": key,
+            "value": clean_value,
+            "type": "reminder",
+            "label": _memory_label_from_key(key),
+            "index": reminder_order,
+        }
+
+    _upsert_fact(cursor, key, clean_value, user_id=user_id)
     conn.commit()
     conn.close()
 
     return {
         "key": key,
         "value": clean_value,
-        "type": _memory_type_from_key(key),
+        "type": "fact",
         "label": _memory_label_from_key(key),
-        "index": _memory_index_from_key(key),
+        "index": None,
     }
 
 
@@ -427,18 +607,39 @@ def delete_memory_entry(key, user_id: str | None = None):
     Remove uma entrada de memoria pelo identificador real.
     """
     if key in SETTINGS_DEFAULTS:
-        default_value = SETTINGS_DEFAULTS.get(key, "")
-        update_settings({key: default_value}, user_id=user_id)
-        return True
+        raise ValueError("As configuracoes da conta devem ser removidas pelo endpoint /settings.")
 
     init_db()
     conn = _connect()
-    c = conn.cursor()
-    c.execute(
-        "DELETE FROM user_memory WHERE user_id IS ? AND key = ?",
-        (((user_id or "").strip() or None), key),
+    cursor = conn.cursor()
+
+    preference_order = _extract_sort_order(key, "preference_")
+    if preference_order is not None:
+        cursor.execute(
+            "DELETE FROM user_preferences WHERE user_id IS ? AND sort_order = ?",
+            (_clean_user_id(user_id), preference_order),
+        )
+        deleted = cursor.rowcount > 0
+        conn.commit()
+        conn.close()
+        return deleted
+
+    reminder_order = _extract_sort_order(key, "reminder_")
+    if reminder_order is not None:
+        cursor.execute(
+            "DELETE FROM user_reminders WHERE user_id IS ? AND sort_order = ?",
+            (_clean_user_id(user_id), reminder_order),
+        )
+        deleted = cursor.rowcount > 0
+        conn.commit()
+        conn.close()
+        return deleted
+
+    cursor.execute(
+        "DELETE FROM user_facts WHERE user_id IS ? AND key = ?",
+        (_clean_user_id(user_id), key),
     )
-    deleted = c.rowcount > 0
+    deleted = cursor.rowcount > 0
     conn.commit()
     conn.close()
     return deleted
@@ -446,14 +647,19 @@ def delete_memory_entry(key, user_id: str | None = None):
 
 def clear_memory(user_id: str | None = None):
     """
-    Remove todas as entradas de memoria.
+    Remove todas as entradas semanticas de memoria.
+    Nao limpa configuracoes da conta.
     """
     init_db()
     conn = _connect()
-    c = conn.cursor()
-    where_sql, params = _user_filter_sql(user_id)
-    c.execute(f"DELETE FROM user_memory WHERE {where_sql}", params)
-    deleted_count = c.rowcount
+    cursor = conn.cursor()
+    deleted_count = 0
+
+    for table_name in ("user_facts", "user_preferences", "user_reminders"):
+        where_sql, params = _user_filter_sql(user_id)
+        cursor.execute(f"DELETE FROM {table_name} WHERE {where_sql}", params)
+        deleted_count += cursor.rowcount
+
     conn.commit()
     conn.close()
     return deleted_count

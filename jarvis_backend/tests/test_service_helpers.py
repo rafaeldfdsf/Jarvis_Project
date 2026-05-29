@@ -2,7 +2,10 @@ import unittest
 
 from assistant.service import (
     build_client_action,
+    extract_youtube_playback_action,
     extract_youtube_query,
+    extract_youtube_request,
+    extract_youtube_result_index,
     matches_close_tab_command,
     matches_close_window_command,
     matches_memory_clear_command,
@@ -56,6 +59,12 @@ class ServiceHelperTests(unittest.TestCase):
                 "arguments": {"action": "play_youtube", "query": "Daft Punk"},
             }
         )
+        youtube_pause = build_client_action(
+            {
+                "tool_name": "control_computer",
+                "arguments": {"action": "pause_youtube"},
+            }
+        )
 
         self.assertEqual(
             close_app,
@@ -77,8 +86,16 @@ class ServiceHelperTests(unittest.TestCase):
             youtube_search,
             {
                 "type": "pc_action",
-                "action": "youtube_search",
+                "action": "youtube_play",
                 "arguments": {"query": "Daft Punk"},
+            },
+        )
+        self.assertEqual(
+            youtube_pause,
+            {
+                "type": "pc_action",
+                "action": "youtube_pause",
+                "arguments": {},
             },
         )
 
@@ -108,7 +125,7 @@ class ServiceHelperTests(unittest.TestCase):
             youtube_search,
             {
                 "type": "pc_action",
-                "action": "youtube_search",
+                "action": "youtube_play",
                 "arguments": {"query": "Muse Uprising"},
             },
         )
@@ -133,7 +150,37 @@ class ServiceHelperTests(unittest.TestCase):
             extract_youtube_query("toca bohemian rhapsody no youtube"),
             "bohemian rhapsody",
         )
+        self.assertEqual(
+            extract_youtube_query("abre o youtube e mete uma musica calma"),
+            "musica calma",
+        )
         self.assertIsNone(extract_youtube_query("abre o google"))
+
+    def test_extract_youtube_request_distinguishes_search_from_play(self):
+        self.assertEqual(
+            extract_youtube_request("pesquisa lo fi no youtube"),
+            {"action": "youtube_search", "query": "lo fi", "result_index": 1},
+        )
+        self.assertEqual(
+            extract_youtube_request("mete uma musica calma no youtube"),
+            {"action": "youtube_play", "query": "musica calma", "result_index": 1},
+        )
+
+    def test_extract_youtube_result_index_handles_ordinal_commands(self):
+        self.assertEqual(extract_youtube_result_index("abre a segunda musica"), 2)
+        self.assertEqual(extract_youtube_result_index("toca o terceiro video do youtube"), 3)
+        self.assertIsNone(extract_youtube_result_index("abre o youtube"))
+
+    def test_extract_youtube_playback_action_detects_pause_and_resume(self):
+        self.assertEqual(
+            extract_youtube_playback_action("poe o video do youtube na pausa"),
+            "youtube_pause",
+        )
+        self.assertEqual(
+            extract_youtube_playback_action("retoma o video do youtube"),
+            "youtube_resume",
+        )
+        self.assertIsNone(extract_youtube_playback_action("abre o youtube"))
 
 
 if __name__ == "__main__":

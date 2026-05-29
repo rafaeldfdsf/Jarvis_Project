@@ -1,6 +1,10 @@
 from dataclasses import replace
+import sqlite3
+import tempfile
 from types import SimpleNamespace
 import unittest
+from pathlib import Path
+import re
 from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
@@ -368,6 +372,29 @@ class ApiServerTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 401)
 
+    @patch("api.server.update_memory_entry", side_effect=ValueError("As configuracoes da conta devem ser alteradas pelo endpoint /settings."))
+    def test_put_memory_rejects_settings_keys(self, mock_update_memory_entry):
+        response = self.client.put(
+            "/memory/assistant_name",
+            headers=self.auth_headers(),
+            json={"value": "Daniel"},
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("/settings", response.json()["detail"])
+        mock_update_memory_entry.assert_called_once_with("assistant_name", "Daniel", user_id=None)
+
+    @patch("api.server.delete_memory_entry", side_effect=ValueError("As configuracoes da conta devem ser removidas pelo endpoint /settings."))
+    def test_delete_memory_rejects_settings_keys(self, mock_delete_memory_entry):
+        response = self.client.delete(
+            "/memory/assistant_name",
+            headers=self.auth_headers(),
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("/settings", response.json()["detail"])
+        mock_delete_memory_entry.assert_called_once_with("assistant_name", user_id=None)
+
     @patch("api.server.connection_status", return_value={
         "configured": True,
         "connected": True,
@@ -577,6 +604,520 @@ class ApiServerTests(unittest.TestCase):
         self.assertEqual(response.json()["tool_result"]["tool_name"], "open_app")
         mock_dispatch.assert_awaited_once()
         mock_chat.assert_called_once()
+
+    @patch.object(
+        server.agent_gateway,
+        "dispatch_action",
+        new_callable=AsyncMock,
+        return_value={
+            "ok": False,
+            "device_id": "pc-escritorio",
+            "result": None,
+            "error": "Timeout ao esperar resposta do agente pc-escritorio.",
+        },
+    )
+    @patch.object(
+        server.assistant,
+        "chat",
+        return_value={
+            "session_id": "sess-1",
+            "reply": "A abrir o Spotify.",
+            "tool_result": None,
+            "desktop_tools_enabled": True,
+            "client_action": {
+                "type": "pc_action",
+                "action": "open_app",
+                "arguments": {"app_name": "spotify"},
+            },
+        },
+    )
+    def test_chat_returns_honest_failure_when_connected_agent_action_fails(self, mock_chat, mock_dispatch):
+        response = self.client.post(
+            "/chat",
+            headers=self.auth_headers(),
+            json={"session_id": "sess-1", "message": "abre o spotify"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(response.json()["client_action"])
+        self.assertEqual(response.json()["tool_result"]["tool_name"], "open_app")
+        self.assertFalse(response.json()["tool_result"]["ok"])
+        self.assertIn("falhou", response.json()["reply"].lower())
+        self.assertIn("timeout ao esperar resposta", response.json()["reply"].lower())
+        mock_dispatch.assert_awaited_once()
+        mock_chat.assert_called_once()
+
+    @patch.object(
+        server.agent_gateway,
+        "dispatch_action",
+        new_callable=AsyncMock,
+        return_value={
+            "ok": False,
+            "result": None,
+            "error": "Nenhum agente executor ligado com capacidade desktop.control.",
+        },
+    )
+    @patch.object(
+        server.assistant,
+        "chat",
+        return_value={
+            "session_id": "sess-1",
+            "reply": "A abrir o Spotify.",
+            "tool_result": None,
+            "desktop_tools_enabled": True,
+            "client_action": {
+                "type": "pc_action",
+                "action": "open_app",
+                "arguments": {"app_name": "spotify"},
+            },
+        },
+    )
+    def test_chat_keeps_client_action_for_local_fallback_when_no_agent_is_connected(self, mock_chat, mock_dispatch):
+        response = self.client.post(
+            "/chat",
+            headers=self.auth_headers(),
+            json={"session_id": "sess-1", "message": "abre o spotify"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["reply"], "A abrir o Spotify.")
+        self.assertIsNone(response.json()["tool_result"])
+        self.assertEqual(response.json()["client_action"]["action"], "open_app")
+        mock_dispatch.assert_awaited_once()
+        mock_chat.assert_called_once()
+
+
+class ApiServerMemoryFlowTests(unittest.TestCase):
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.db_path = Path(self.temp_dir.name) / "api-memory-flow-tests.db"
+        self.client = TestClient(server.app)
+        self.original_settings = server.settings
+        server.settings = replace(server.settings, api_token="test-token")
+        server.assistant.sessions.clear()
+        self.memory_connect_patcher = patch(
+            "memory.user_memory._connect",
+            side_effect=self._connect_to_temp_db,
+        )
+        self.settings_connect_patcher = patch(
+            "settings_store.connect",
+            side_effect=self._connect_to_temp_db,
+        )
+        self.resolve_auth_session_patcher = patch(
+            "api.server.resolve_auth_session",
+            side_effect=self._resolve_auth_session,
+        )
+        self.memory_connect_patcher.start()
+        self.settings_connect_patcher.start()
+        self.resolve_auth_session_patcher.start()
+
+    def tearDown(self):
+        self.memory_connect_patcher.stop()
+        self.settings_connect_patcher.stop()
+        self.resolve_auth_session_patcher.stop()
+        server.assistant.sessions.clear()
+        server.settings = self.original_settings
+        self.temp_dir.cleanup()
+
+    def _connect_to_temp_db(self):
+        conn = sqlite3.connect(self.db_path, check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    def _resolve_auth_session(self, token: str):
+        mapping = {
+            "session-user-1": (
+                SimpleNamespace(token="session-user-1", user_id="user-1"),
+                SimpleNamespace(
+                    id="user-1",
+                    email="rafael@example.com",
+                    display_name="Rafael",
+                    created_at="2026-05-02T12:00:00+00:00",
+                    email_verified_at="2026-05-02T12:05:00+00:00",
+                    email_verified=True,
+                ),
+            ),
+            "session-user-2": (
+                SimpleNamespace(token="session-user-2", user_id="user-2"),
+                SimpleNamespace(
+                    id="user-2",
+                    email="maria@example.com",
+                    display_name="Maria",
+                    created_at="2026-05-02T12:00:00+00:00",
+                    email_verified_at="2026-05-02T12:05:00+00:00",
+                    email_verified=True,
+                ),
+            ),
+        }
+        return mapping.get(token)
+
+    def auth_headers(self, token: str = "session-user-1") -> dict[str, str]:
+        return {"Authorization": f"Bearer {token}"}
+
+    def _memory_aware_llm(self, messages, user_id=None):
+        system_prompt = messages[0]["content"]
+        last_user_message = ""
+        for message in reversed(messages):
+            if message.get("role") == "user":
+                last_user_message = str(message.get("content") or "").lower()
+                break
+
+        name_match = re.search(r"Sabes que o utilizador chama-se (.+?)\.", system_prompt)
+        remembered_name = name_match.group(1).strip() if name_match else ""
+        remembered_reminders = re.findall(r"- (.+)", system_prompt.split("Lembretes importantes:\n", 1)[1]) if "Lembretes importantes:\n" in system_prompt else []
+        remembered_preferences = re.findall(r"- (.+)", system_prompt.split("Preferencias do utilizador:\n", 1)[1]) if "Preferencias do utilizador:\n" in system_prompt else []
+
+        def as_second_person(text: str) -> str:
+            return (
+                text.replace("tenho ", "tens ")
+                .replace("estou ", "estas ")
+                .replace("vou ", "vais ")
+            )
+
+        def preference_reply(text: str) -> str:
+            normalized = text.rstrip(".").strip()
+            if normalized.lower().startswith("prefiro "):
+                return "Preferes " + normalized[8:].strip().lower() + "."
+            return normalized + "."
+
+        if "chamo-me rafael" in last_user_message:
+            return "Claro, Rafael."
+        if "afinal chamo-me rui" in last_user_message:
+            return "Percebi. Passo a tratar-te por Rui."
+        if "lembra-te que tenho consulta amanha" in last_user_message:
+            return "Fica guardado."
+        if "ja nao preciso desse lembrete" in last_user_message:
+            return "Combinado, ja removi esse lembrete."
+        if "lembras-te do meu nome" in last_user_message or "qual e o meu nome" in last_user_message:
+            if remembered_name:
+                return f"Sim. Chamas-te {remembered_name}."
+            return "Ainda nao me disseste o teu nome."
+        if "que tipo de respostas prefiro" in last_user_message:
+            if remembered_preferences:
+                return preference_reply(remembered_preferences[-1])
+            return "Ainda nao me disseste nenhuma preferencia sobre isso."
+        if "que lembretes tens meus" in last_user_message:
+            if remembered_reminders:
+                return "Tenho estes lembretes teus: " + "; ".join(remembered_reminders) + "."
+            return "Nao tenho lembretes teus guardados."
+        if "o que e que te pedi para te lembrares" in last_user_message or "do que te lembras" in last_user_message:
+            if remembered_reminders:
+                return "Pediste-me para me lembrar que " + as_second_person(remembered_reminders[-1]) + "."
+            return "Nao tenho nenhum lembrete teu guardado."
+        return "Resposta generica."
+
+    def test_chat_flow_persists_name_and_reminder_and_lists_them_later(self):
+        with patch("assistant.service.call_llm", side_effect=["Claro, fica guardado.", "Combinado."]):
+            session_response = self.client.post("/sessions", headers=self.auth_headers())
+            self.assertEqual(session_response.status_code, 200)
+            session_id = session_response.json()["session_id"]
+
+            name_response = self.client.post(
+                "/chat",
+                headers=self.auth_headers(),
+                json={"session_id": session_id, "message": "Chamo-me Rafael"},
+            )
+            reminder_response = self.client.post(
+                "/chat",
+                headers=self.auth_headers(),
+                json={"session_id": session_id, "message": "Lembra-te que tenho consulta amanha"},
+            )
+
+        memory_list_response = self.client.get("/memory", headers=self.auth_headers())
+        memory_show_response = self.client.post(
+            "/chat",
+            headers=self.auth_headers(),
+            json={"session_id": session_id, "message": "mostra memoria"},
+        )
+
+        self.assertEqual(name_response.status_code, 200)
+        self.assertEqual(name_response.json()["reply"], "Claro, fica guardado.")
+        self.assertEqual(reminder_response.status_code, 200)
+        self.assertEqual(reminder_response.json()["reply"], "Combinado.")
+        self.assertEqual(memory_list_response.status_code, 200)
+        self.assertEqual(memory_show_response.status_code, 200)
+
+        memory_entries = memory_list_response.json()
+        self.assertEqual(
+            [(entry["key"], entry["value"]) for entry in memory_entries],
+            [("name", "Rafael"), ("reminder_1", "tenho consulta amanha")],
+        )
+        self.assertIn("Nome guardado: Rafael", memory_show_response.json()["reply"])
+        self.assertIn("Lembretes:", memory_show_response.json()["reply"])
+        self.assertIn("1. tenho consulta amanha", memory_show_response.json()["reply"])
+
+    def test_chat_flow_uses_saved_weather_preference_and_keeps_user_memory_isolated(self):
+        with patch("assistant.service.call_llm", side_effect=["Perfeito, vou guardar isso.", "Hoje em Caldas da Rainha esta sol."]):
+            session_user_1 = self.client.post("/sessions", headers=self.auth_headers("session-user-1"))
+            self.assertEqual(session_user_1.status_code, 200)
+            session_id_user_1 = session_user_1.json()["session_id"]
+
+            preference_response = self.client.post(
+                "/chat",
+                headers=self.auth_headers("session-user-1"),
+                json={
+                    "session_id": session_id_user_1,
+                    "message": "Sempre que eu pedir o tempo quero que respondas para Caldas da Rainha",
+                },
+            )
+
+            with patch(
+                "assistant.service.execute_tool",
+                return_value={
+                    "tool_name": "get_weather",
+                    "ok": True,
+                    "data": {"city": "caldas da rainha", "forecast": "sol"},
+                },
+            ) as mock_execute_tool:
+                weather_response = self.client.post(
+                    "/chat",
+                    headers=self.auth_headers("session-user-1"),
+                    json={"session_id": session_id_user_1, "message": "como esta o tempo hoje"},
+                )
+
+        user_1_memory_response = self.client.get("/memory", headers=self.auth_headers("session-user-1"))
+        user_2_memory_response = self.client.get("/memory", headers=self.auth_headers("session-user-2"))
+
+        self.assertEqual(preference_response.status_code, 200)
+        self.assertEqual(preference_response.json()["reply"], "Perfeito, vou guardar isso.")
+        self.assertEqual(weather_response.status_code, 200)
+        self.assertEqual(weather_response.json()["reply"], "Hoje em Caldas da Rainha esta sol.")
+        mock_execute_tool.assert_called_once_with(
+            "get_weather",
+            {"city": "caldas da rainha", "day_offset": 0},
+        )
+
+        self.assertEqual(
+            [(entry["key"], entry["value"]) for entry in user_1_memory_response.json()],
+            [
+                (
+                    "preference_1",
+                    "Sempre que eu pedir o tempo, quero que respondas para caldas da rainha.",
+                )
+            ],
+        )
+        self.assertEqual(user_2_memory_response.json(), [])
+
+    def test_chat_flow_recalls_name_and_reminder_with_natural_questions(self):
+        with patch("assistant.service.call_llm", side_effect=self._memory_aware_llm):
+            session_response = self.client.post("/sessions", headers=self.auth_headers())
+            self.assertEqual(session_response.status_code, 200)
+            session_id = session_response.json()["session_id"]
+
+            self.client.post(
+                "/chat",
+                headers=self.auth_headers(),
+                json={"session_id": session_id, "message": "Chamo-me Rafael"},
+            )
+            self.client.post(
+                "/chat",
+                headers=self.auth_headers(),
+                json={"session_id": session_id, "message": "Lembra-te que tenho consulta amanha"},
+            )
+
+            name_recall_response = self.client.post(
+                "/chat",
+                headers=self.auth_headers(),
+                json={"session_id": session_id, "message": "Lembras-te do meu nome?"},
+            )
+            reminder_recall_response = self.client.post(
+                "/chat",
+                headers=self.auth_headers(),
+                json={
+                    "session_id": session_id,
+                    "message": "O que e que te pedi para te lembrares?",
+                },
+            )
+
+        self.assertEqual(name_recall_response.status_code, 200)
+        self.assertEqual(name_recall_response.json()["reply"], "Sim. Chamas-te Rafael.")
+        self.assertEqual(reminder_recall_response.status_code, 200)
+        self.assertEqual(
+            reminder_recall_response.json()["reply"],
+            "Pediste-me para me lembrar que tens consulta amanha.",
+        )
+
+    def test_chat_flow_updates_name_after_user_correction(self):
+        with patch("assistant.service.call_llm", side_effect=self._memory_aware_llm):
+            session_response = self.client.post("/sessions", headers=self.auth_headers())
+            self.assertEqual(session_response.status_code, 200)
+            session_id = session_response.json()["session_id"]
+
+            self.client.post(
+                "/chat",
+                headers=self.auth_headers(),
+                json={"session_id": session_id, "message": "Chamo-me Rafael"},
+            )
+            self.client.post(
+                "/chat",
+                headers=self.auth_headers(),
+                json={"session_id": session_id, "message": "Afinal chamo-me Rui"},
+            )
+            recall_response = self.client.post(
+                "/chat",
+                headers=self.auth_headers(),
+                json={"session_id": session_id, "message": "Qual e o meu nome agora?"},
+            )
+
+        self.assertEqual(recall_response.status_code, 200)
+        self.assertEqual(recall_response.json()["reply"], "Sim. Chamas-te Rui.")
+
+    def test_chat_flow_removes_latest_reminder_from_natural_phrase(self):
+        with patch("assistant.service.call_llm", side_effect=self._memory_aware_llm):
+            session_response = self.client.post("/sessions", headers=self.auth_headers())
+            self.assertEqual(session_response.status_code, 200)
+            session_id = session_response.json()["session_id"]
+
+            self.client.post(
+                "/chat",
+                headers=self.auth_headers(),
+                json={"session_id": session_id, "message": "Lembra-te que tenho consulta amanha"},
+            )
+            removal_response = self.client.post(
+                "/chat",
+                headers=self.auth_headers(),
+                json={"session_id": session_id, "message": "Ja nao preciso desse lembrete"},
+            )
+            recall_response = self.client.post(
+                "/chat",
+                headers=self.auth_headers(),
+                json={
+                    "session_id": session_id,
+                    "message": "O que e que te pedi para te lembrares?",
+                },
+            )
+            memory_response = self.client.get("/memory", headers=self.auth_headers())
+
+        self.assertEqual(removal_response.status_code, 200)
+        self.assertEqual(removal_response.json()["reply"], "Removi o lembrete mais recente da memoria.")
+        self.assertEqual(recall_response.status_code, 200)
+        self.assertEqual(recall_response.json()["reply"], "Nao tenho nenhum lembrete teu guardado.")
+        self.assertEqual(memory_response.status_code, 200)
+        self.assertEqual(memory_response.json(), [])
+
+    def test_chat_flow_uses_latest_weather_preference_after_change_of_mind(self):
+        with patch(
+            "assistant.service.call_llm",
+            side_effect=[
+                "Primeira preferencia guardada.",
+                "Segunda preferencia guardada.",
+                "Tempo final.",
+            ],
+        ):
+            session_response = self.client.post("/sessions", headers=self.auth_headers())
+            self.assertEqual(session_response.status_code, 200)
+            session_id = session_response.json()["session_id"]
+
+            self.client.post(
+                "/chat",
+                headers=self.auth_headers(),
+                json={
+                    "session_id": session_id,
+                    "message": "Sempre que eu pedir o tempo quero que respondas para Caldas da Rainha",
+                },
+            )
+            self.client.post(
+                "/chat",
+                headers=self.auth_headers(),
+                json={
+                    "session_id": session_id,
+                    "message": "Afinal quando eu pedir o tempo quero que respondas para Lisboa",
+                },
+            )
+
+            with patch(
+                "assistant.service.execute_tool",
+                return_value={
+                    "tool_name": "get_weather",
+                    "ok": True,
+                    "data": {"city": "Lisboa", "forecast": "sol"},
+                },
+            ) as mock_execute_tool:
+                weather_response = self.client.post(
+                    "/chat",
+                    headers=self.auth_headers(),
+                    json={"session_id": session_id, "message": "como esta o tempo hoje"},
+                )
+
+        self.assertEqual(weather_response.status_code, 200)
+        self.assertEqual(weather_response.json()["reply"], "Tempo final.")
+        mock_execute_tool.assert_called_once_with(
+            "get_weather",
+            {"city": "Lisboa", "day_offset": 0},
+        )
+
+    @patch(
+        "memory.extract.call_llm",
+        return_value=(
+            '{"should_store": true, "name": "", '
+            '"preferences": ["prefiro respostas curtas e diretas"], '
+            '"reminders": []}'
+        ),
+    )
+    def test_chat_flow_can_store_free_form_preference_via_llm_extraction(self, mock_extract_llm):
+        with patch("assistant.service.call_llm", side_effect=self._memory_aware_llm):
+            session_response = self.client.post("/sessions", headers=self.auth_headers())
+            self.assertEqual(session_response.status_code, 200)
+            session_id = session_response.json()["session_id"]
+
+            chat_response = self.client.post(
+                "/chat",
+                headers=self.auth_headers(),
+                json={"session_id": session_id, "message": "Prefiro respostas curtas e diretas."},
+            )
+            recall_response = self.client.post(
+                "/chat",
+                headers=self.auth_headers(),
+                json={"session_id": session_id, "message": "Que tipo de respostas prefiro?"},
+            )
+            memory_response = self.client.get("/memory", headers=self.auth_headers())
+
+        self.assertEqual(chat_response.status_code, 200)
+        self.assertEqual(chat_response.json()["reply"], "Resposta generica.")
+        self.assertEqual(recall_response.status_code, 200)
+        self.assertEqual(recall_response.json()["reply"], "Preferes respostas curtas e diretas.")
+        self.assertEqual(
+            [(entry["key"], entry["value"]) for entry in memory_response.json()],
+            [("preference_1", "Prefiro respostas curtas e diretas.")],
+        )
+        mock_extract_llm.assert_called()
+
+    @patch(
+        "memory.extract.call_llm",
+        return_value=(
+            '{"should_store": true, "name": "", '
+            '"preferences": ["responde de forma curta daqui para a frente"], '
+            '"reminders": []}'
+        ),
+    )
+    def test_chat_flow_can_store_non_formulaic_preference_instruction(self, mock_extract_llm):
+        with patch("assistant.service.call_llm", side_effect=self._memory_aware_llm):
+            session_response = self.client.post("/sessions", headers=self.auth_headers())
+            self.assertEqual(session_response.status_code, 200)
+            session_id = session_response.json()["session_id"]
+
+            chat_response = self.client.post(
+                "/chat",
+                headers=self.auth_headers(),
+                json={
+                    "session_id": session_id,
+                    "message": "Daqui para a frente responde de forma curta.",
+                },
+            )
+            recall_response = self.client.post(
+                "/chat",
+                headers=self.auth_headers(),
+                json={"session_id": session_id, "message": "Que tipo de respostas prefiro?"},
+            )
+            memory_response = self.client.get("/memory", headers=self.auth_headers())
+
+        self.assertEqual(chat_response.status_code, 200)
+        self.assertIn("responde de forma curta", recall_response.json()["reply"].lower())
+        self.assertEqual(
+            [(entry["key"], entry["value"]) for entry in memory_response.json()],
+            [("preference_1", "Responde de forma curta daqui para a frente.")],
+        )
+        mock_extract_llm.assert_called()
 
 
 if __name__ == "__main__":

@@ -54,6 +54,14 @@ MONTHS_PT = (
     "dezembro",
 )
 
+YOUTUBE_RESULT_ORDINALS = {
+    "primeir": 1,
+    "segund": 2,
+    "terceir": 3,
+    "quart": 4,
+    "quint": 5,
+}
+
 
 def normalize_text(text: str) -> str:
     normalized = unicodedata.normalize("NFD", (text or "").lower().strip())
@@ -111,6 +119,20 @@ def matches_memory_clear_command(msg: str) -> bool:
     )
 
 
+def matches_last_reminder_removal_command(msg: str) -> bool:
+    removal_phrases = (
+        "ja nao preciso desse lembrete",
+        "ja nao preciso deste lembrete",
+        "esquece esse lembrete",
+        "esquece este lembrete",
+        "remove esse lembrete",
+        "remove este lembrete",
+        "apaga esse lembrete",
+        "apaga este lembrete",
+    )
+    return any(phrase in msg for phrase in removal_phrases)
+
+
 def matches_close_window_command(msg: str) -> bool:
     return re.fullmatch(
         r"(?:podes\s+)?(?:fecha|fechar)\s+(?:a\s+)?(?:esta\s+)?janela(?:\s+ativa)?(?:\s+por favor)?",
@@ -125,30 +147,110 @@ def matches_close_tab_command(msg: str) -> bool:
 
 
 def extract_youtube_query(msg: str) -> str | None:
-    if "youtube" not in msg:
+    request = extract_youtube_request(msg)
+    if not request:
         return None
+    return request.get("query")
 
+
+def extract_youtube_result_index(msg: str) -> int | None:
+    normalized = normalize_text(msg)
     if not any(
-        token in msg
-        for token in ("abre", "abrir", "toca", "tocar", "poe", "por", "pesquisa", "procur")
+        token in normalized
+        for token in ("abre", "abrir", "toca", "tocar", "poe", "por", "mete", "meter")
     ):
         return None
 
-    match = re.search(
-        r"(?:abre|abrir|toca|tocar|poe|por|pesquisa|procurar)\s+(.+?)\s+(?:no\s+youtube|na\s+youtube|youtube)$",
-        msg,
-    )
-    if not match:
+    if not any(
+        token in normalized
+        for token in ("musica", "video", "resultado", "faixa", "canal")
+    ):
         return None
 
-    query = match.group(1).strip()
-    query = re.sub(
-        r"^(?:(?:uma|um|a|o)\s+)?(?:musica|video)\s*(?:dos|das|do|da|de)?\s*",
-        "",
-        query,
-    ).strip()
-    query = re.sub(r"^(?:pesquisa|procura)\s+por\s+", "", query).strip()
-    return query or None
+    for stem, index in YOUTUBE_RESULT_ORDINALS.items():
+        if stem in normalized:
+            return index
+
+    return None
+
+
+def extract_youtube_playback_action(msg: str) -> str | None:
+    normalized = normalize_text(msg)
+    if "youtube" not in normalized:
+        return None
+
+    pause_tokens = ("pausa", "pausar", "parar", "mete em pausa", "poe em pausa", "por em pausa")
+    resume_tokens = ("retoma", "retomar", "continua", "continuar", "despausa", "volta a tocar")
+
+    if any(token in normalized for token in pause_tokens) and any(
+        token in normalized for token in ("video", "musica", "youtube", "faixa")
+    ):
+        return "youtube_pause"
+
+    if any(token in normalized for token in resume_tokens) and any(
+        token in normalized for token in ("video", "musica", "youtube", "faixa")
+    ):
+        return "youtube_resume"
+
+    return None
+
+
+def extract_youtube_request(msg: str) -> dict[str, str | int] | None:
+    if "youtube" not in msg:
+        return None
+
+    normalized = normalize_text(msg)
+    if not any(
+        token in normalized
+        for token in (
+            "abre",
+            "abrir",
+            "toca",
+            "tocar",
+            "poe",
+            "por",
+            "mete",
+            "meter",
+            "pesquisa",
+            "pesquisar",
+            "procura",
+            "procurar",
+        )
+    ):
+        return None
+
+    patterns = (
+        r"(?:toca|tocar|poe|por|mete|meter)\s+(.+?)\s+(?:no\s+youtube|na\s+youtube|youtube)$",
+        r"(?:pesquisa|pesquisar|procura|procurar)\s+(.+?)\s+(?:no\s+youtube|na\s+youtube|youtube)$",
+        r"(?:abre|abrir)\s+(?:o\s+)?youtube\s+e\s+(?:toca|tocar|poe|por|mete|meter|pesquisa|pesquisar|procura|procurar)\s+(.+)$",
+        r"(?:abre|abrir)\s+(.+?)\s+(?:no\s+youtube|na\s+youtube|youtube)$",
+    )
+
+    raw_query = ""
+    for pattern in patterns:
+        match = re.search(pattern, normalized, re.IGNORECASE)
+        if match:
+            raw_query = match.group(1).strip()
+            break
+
+    if not raw_query:
+        return None
+
+    query = re.sub(r"^(?:uma|um|a|o)\s+", "", raw_query).strip()
+    artist_match = re.match(r"^(?:musica|video)\s+(?:dos|das|do|da|de)\s+(.+)$", query)
+    if artist_match:
+        query = artist_match.group(1).strip()
+
+    if not query:
+        return None
+
+    search_verbs = ("pesquisa", "pesquisar", "procura", "procurar")
+    action = "youtube_search" if any(verb in normalized for verb in search_verbs) else "youtube_play"
+    return {
+        "action": action,
+        "query": query,
+        "result_index": 1,
+    }
 
 
 def build_client_action(tool_call: dict) -> dict | None:
@@ -219,9 +321,16 @@ def build_client_action(tool_call: dict) -> dict | None:
             "close_current_tab": "close_tab",
             "close_youtube_tab": "close_tab",
             "search_youtube": "youtube_search",
-            "play_youtube": "youtube_search",
-            "play_music_on_youtube": "youtube_search",
-            "open_music_on_youtube": "youtube_search",
+            "play_youtube": "youtube_play",
+            "play_music_on_youtube": "youtube_play",
+            "open_music_on_youtube": "youtube_play",
+            "open_youtube_result": "youtube_play",
+            "play_youtube_result": "youtube_play",
+            "pause_youtube": "youtube_pause",
+            "pause_youtube_video": "youtube_pause",
+            "resume_youtube": "youtube_resume",
+            "resume_youtube_video": "youtube_resume",
+            "play_pause_youtube": "youtube_toggle_playback",
             "switch_window": "activate_window",
             "focus_window": "activate_window",
             "open_website": "open_url",
@@ -237,13 +346,18 @@ def build_client_action(tool_call: dict) -> dict | None:
             "text": cleaned_value("text"),
             "keys": cleaned_value("keys"),
         }
+        raw_result_index = args.get("result_index")
+        if isinstance(raw_result_index, int):
+            action_args["result_index"] = raw_result_index
+        elif isinstance(raw_result_index, str) and raw_result_index.strip().isdigit():
+            action_args["result_index"] = int(raw_result_index.strip())
 
         if target_value:
             if action_name in {"open_app", "close_app"} and not action_args["app_name"]:
                 action_args["app_name"] = target_value
             elif action_name in {"close_window", "activate_window", "minimize_window"} and not action_args["window_title"]:
                 action_args["window_title"] = target_value
-            elif action_name == "youtube_search" and not action_args["query"]:
+            elif action_name in {"youtube_search", "youtube_play"} and not action_args["query"]:
                 action_args["query"] = target_value
             elif action_name == "open_url" and not action_args["url"]:
                 action_args["url"] = target_value
@@ -275,6 +389,10 @@ def build_client_action(tool_call: dict) -> dict | None:
             "type_text",
             "press_keys",
             "youtube_search",
+            "youtube_play",
+            "youtube_pause",
+            "youtube_resume",
+            "youtube_toggle_playback",
             "activate_window",
             "minimize_window",
         }:
@@ -286,7 +404,17 @@ def build_client_action(tool_call: dict) -> dict | None:
                 token in inferred_text
                 for token in ("musica", "video", "toca", "abre", "pesquisa", "procur")
             ):
-                action_name = "youtube_search"
+                action_name = "youtube_play" if any(
+                    token in inferred_text for token in ("toca", "musica", "video")
+                ) else "youtube_search"
+            elif "youtube" in inferred_text and any(
+                token in inferred_text for token in ("pausa", "pausar", "parar")
+            ):
+                action_name = "youtube_pause"
+            elif "youtube" in inferred_text and any(
+                token in inferred_text for token in ("retoma", "retomar", "continua", "continuar", "despausa")
+            ):
+                action_name = "youtube_resume"
             elif any(token in inferred_text for token in ("app", "aplicacao", "programa")) and any(
                 token in inferred_text for token in ("fecha", "fechar", "close", "encerrar")
             ):
@@ -296,21 +424,22 @@ def build_client_action(tool_call: dict) -> dict | None:
             ):
                 action_name = "close_window"
 
-        if action_name == "youtube_search" and not action_args["query"]:
+        if action_name in {"youtube_search", "youtube_play"} and not action_args["query"]:
             fallback_query = target_value or action_args["text"] or raw_action
             fallback_query = re.sub(r"\byoutube\b", "", normalize_text(fallback_query)).strip()
             fallback_query = re.sub(
-                r"^(?:abre|abrir|toca|tocar|poe|por|pesquisa|procurar)\s+",
+                r"^(?:abre|abrir|toca|tocar|poe|por|mete|meter|pesquisa|procurar)\s+",
                 "",
                 fallback_query,
             ).strip()
-            fallback_query = re.sub(
-                r"^(?:uma|um|a|o)\s+(?:musica|video)\s*(?:dos|das|do|da|de)?\s*",
-                "",
-                fallback_query,
-            ).strip()
+            fallback_query = re.sub(r"^(?:uma|um|a|o)\s+", "", fallback_query).strip()
             if fallback_query:
                 action_args["query"] = fallback_query
+
+        if action_name == "youtube_play" and "result_index" not in action_args:
+            inferred_result_index = extract_youtube_result_index(inferred_text)
+            if inferred_result_index is not None:
+                action_args["result_index"] = inferred_result_index
 
         supported_actions = {
             "open_app",
@@ -321,6 +450,10 @@ def build_client_action(tool_call: dict) -> dict | None:
             "type_text",
             "press_keys",
             "youtube_search",
+            "youtube_play",
+            "youtube_pause",
+            "youtube_resume",
+            "youtube_toggle_playback",
             "activate_window",
             "minimize_window",
         }
@@ -336,6 +469,7 @@ def build_client_action(tool_call: dict) -> dict | None:
 class SessionState:
     messages: list[dict]
     user_id: str | None = None
+    last_youtube_query: str | None = None
     lock: Lock = field(default_factory=Lock)
 
 
@@ -451,14 +585,59 @@ class AssistantService:
                     },
                 )
 
-            youtube_query = extract_youtube_query(msg)
-            if youtube_query:
+            youtube_playback_action = extract_youtube_playback_action(msg)
+            if youtube_playback_action == "youtube_pause":
                 return response_payload(
-                    "A pesquisar no YouTube.",
+                    "A pausar o video do YouTube.",
                     client_action={
                         "type": "pc_action",
-                        "action": "youtube_search",
-                        "arguments": {"query": youtube_query},
+                        "action": "youtube_pause",
+                        "arguments": {},
+                    },
+                )
+
+            if youtube_playback_action == "youtube_resume":
+                return response_payload(
+                    "A retomar o video do YouTube.",
+                    client_action={
+                        "type": "pc_action",
+                        "action": "youtube_resume",
+                        "arguments": {},
+                    },
+                )
+
+            youtube_result_index = extract_youtube_result_index(msg)
+            if youtube_result_index is not None and session_state.last_youtube_query:
+                return response_payload(
+                    f"A abrir o resultado {youtube_result_index} do YouTube.",
+                    client_action={
+                        "type": "pc_action",
+                        "action": "youtube_play",
+                        "arguments": {
+                            "query": session_state.last_youtube_query,
+                            "result_index": youtube_result_index,
+                        },
+                    },
+                )
+
+            youtube_request = extract_youtube_request(msg)
+            if youtube_request:
+                query = str(youtube_request.get("query") or "").strip()
+                if query:
+                    session_state.last_youtube_query = query
+                action_name = str(youtube_request.get("action") or "youtube_play")
+                reply = "A pesquisar no YouTube."
+                if action_name == "youtube_play":
+                    reply = "A por a tocar no YouTube."
+                return response_payload(
+                    reply,
+                    client_action={
+                        "type": "pc_action",
+                        "action": action_name,
+                        "arguments": {
+                            "query": query,
+                            "result_index": int(youtube_request.get("result_index") or 1),
+                        },
                     },
                 )
 
@@ -528,29 +707,63 @@ class AssistantService:
             if match:
                 index = int(match.group(1))
                 delete_preference(index, user_id=session_state.user_id)
+                messages[0]["content"] = build_system_prompt(
+                    self.available_tools,
+                    user_id=session_state.user_id,
+                )
                 return response_payload(f"Preferencia {index} removida da memoria.")
 
             match = re.search(r"(?:remove|remover)\s+lembrete\s+(\d+)", msg, re.IGNORECASE)
             if match:
                 index = int(match.group(1))
                 delete_reminder(index, user_id=session_state.user_id)
+                messages[0]["content"] = build_system_prompt(
+                    self.available_tools,
+                    user_id=session_state.user_id,
+                )
                 return response_payload(f"Lembrete {index} removido da memoria.")
+
+            if matches_last_reminder_removal_command(msg):
+                facts = load_facts(user_id=session_state.user_id)
+                reminders = facts.get("reminders", [])
+                if not reminders:
+                    return response_payload("Nao tenho nenhum lembrete guardado para remover.")
+                delete_reminder(len(reminders), user_id=session_state.user_id)
+                messages[0]["content"] = build_system_prompt(
+                    self.available_tools,
+                    user_id=session_state.user_id,
+                )
+                return response_payload("Removi o lembrete mais recente da memoria.")
 
             if matches_memory_clear_command(msg):
                 deleted_count = clear_memory(user_id=session_state.user_id)
+                messages[0]["content"] = build_system_prompt(
+                    self.available_tools,
+                    user_id=session_state.user_id,
+                )
                 reply = "Toda a memoria foi limpa."
                 if deleted_count == 0:
                     reply = "Nao havia memoria guardada para limpar."
                 return response_payload(reply)
 
-            if "tempo" in msg:
+            memory_updated = extract_user_facts(user_message, user_id=session_state.user_id)
+            if memory_updated:
+                messages[0]["content"] = build_system_prompt(
+                    self.available_tools,
+                    user_id=session_state.user_id,
+                )
+
+            if "tempo" in msg and not memory_updated:
                 day_offset = parse_day(msg)
                 city = "Lisboa"
 
                 facts = load_facts(user_id=session_state.user_id)
-                for pref in facts.get("preferences", []):
+                for pref in reversed(facts.get("preferences", [])):
                     if "tempo" in pref.lower() and "caldas da rainha" in pref.lower():
                         city = "caldas da rainha"
+                        break
+                    if "tempo" in pref.lower() and "lisboa" in pref.lower():
+                        city = "Lisboa"
                         break
 
                 for known_city in CITY_COORDS.keys():
@@ -578,11 +791,11 @@ class AssistantService:
                 )
 
             messages.append({"role": "user", "content": user_message})
-            extract_user_facts(user_message, user_id=session_state.user_id)
-            messages[0]["content"] = build_system_prompt(
-                self.available_tools,
-                user_id=session_state.user_id,
-            )
+            if memory_updated:
+                messages[0]["content"] = build_system_prompt(
+                    self.available_tools,
+                    user_id=session_state.user_id,
+                )
 
             first_reply = call_llm(messages, user_id=session_state.user_id)
             parsed = None

@@ -5,6 +5,7 @@ import re
 import subprocess
 import unicodedata
 import urllib.parse
+import urllib.request
 import webbrowser
 
 
@@ -272,6 +273,82 @@ def search_youtube(query: str) -> str:
     return f"A pesquisar no YouTube por {clean_query}."
 
 
+def _youtube_results_url(query: str) -> str:
+    encoded_query = urllib.parse.quote_plus(query)
+    return f"https://www.youtube.com/results?search_query={encoded_query}&sp=EgIQAQ%253D%253D"
+
+
+def _extract_youtube_video_ids(html: str) -> list[str]:
+    ids: list[str] = []
+    seen: set[str] = set()
+    for video_id in re.findall(r'"videoId":"([a-zA-Z0-9_-]{11})"', html or ""):
+        if video_id in seen:
+            continue
+        seen.add(video_id)
+        ids.append(video_id)
+    return ids
+
+
+def _resolve_youtube_video_url(query: str, result_index: int = 1) -> str | None:
+    request = urllib.request.Request(
+        _youtube_results_url(query),
+        headers={"User-Agent": "Mozilla/5.0"},
+    )
+    with urllib.request.urlopen(request, timeout=8) as response:
+        html = response.read().decode("utf-8", errors="replace")
+
+    video_ids = _extract_youtube_video_ids(html)
+    if 1 <= result_index <= len(video_ids):
+        video_id = video_ids[result_index - 1]
+        return f"https://www.youtube.com/watch?v={video_id}&autoplay=1"
+    return None
+
+
+def play_youtube(query: str, result_index: int = 1) -> str:
+    clean_query = (query or "").strip()
+    if not clean_query:
+        raise ValueError("Pesquisa vazia para o YouTube.")
+
+    safe_result_index = max(1, int(result_index or 1))
+    try:
+        video_url = _resolve_youtube_video_url(clean_query, safe_result_index)
+    except Exception:
+        video_url = None
+
+    if video_url:
+        webbrowser.open(video_url)
+        if safe_result_index == 1:
+            return f"A abrir a primeira musica do YouTube para {clean_query}."
+        return f"A abrir o resultado {safe_result_index} do YouTube para {clean_query}."
+
+    webbrowser.open(_youtube_results_url(clean_query))
+    if safe_result_index == 1:
+        return f"A abrir os resultados do YouTube para {clean_query}."
+    return f"A abrir os resultados do YouTube para {clean_query} no resultado {safe_result_index}."
+
+
+def _control_youtube_playback(desired_state: str) -> str:
+    import pyautogui
+
+    windows = _find_windows("youtube")
+    for window in windows:
+        title = (window.title or "").strip()
+        try:
+            if getattr(window, "isMinimized", False):
+                window.restore()
+            window.activate()
+            pyautogui.press("k")
+            if desired_state == "pause":
+                return f"A pausar o video do YouTube em {title or 'janela ativa'}."
+            if desired_state == "resume":
+                return f"A retomar o video do YouTube em {title or 'janela ativa'}."
+            return f"A alternar a reproducao do YouTube em {title or 'janela ativa'}."
+        except Exception:
+            continue
+
+    raise RuntimeError("Nao encontrei uma janela do YouTube ativa para controlar.")
+
+
 def control_computer(action: str, arguments: dict | None = None) -> str:
     args = arguments or {}
     clean_action = _normalize_text(action).replace(" ", "_")
@@ -297,8 +374,23 @@ def control_computer(action: str, arguments: dict | None = None) -> str:
     if clean_action in {"press_keys", "keyboard_shortcut", "atalho"}:
         return press_keys(args.get("keys", ""))
 
-    if clean_action in {"youtube_search", "search_youtube", "play_youtube"}:
+    if clean_action in {"youtube_search", "search_youtube"}:
         return search_youtube(args.get("query", ""))
+
+    if clean_action in {"youtube_play", "play_youtube", "open_youtube_result", "play_youtube_result"}:
+        return play_youtube(
+            args.get("query", ""),
+            int(args.get("result_index", 1) or 1),
+        )
+
+    if clean_action in {"youtube_pause", "pause_youtube", "pause_youtube_video"}:
+        return _control_youtube_playback("pause")
+
+    if clean_action in {"youtube_resume", "resume_youtube", "resume_youtube_video"}:
+        return _control_youtube_playback("resume")
+
+    if clean_action in {"youtube_toggle_playback", "play_pause_youtube"}:
+        return _control_youtube_playback("toggle")
 
     if clean_action in {"activate_window", "switch_window", "focus_window"}:
         return activate_window(args.get("window_title", ""))

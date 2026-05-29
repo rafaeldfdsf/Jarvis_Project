@@ -11,6 +11,7 @@ import threading
 import time
 import unicodedata
 import urllib.parse
+import urllib.request
 import webbrowser
 from datetime import datetime, timezone
 from typing import Any
@@ -482,6 +483,92 @@ def _search_youtube(query: str) -> dict[str, Any]:
     return {'ok': True, 'url': url, 'query': clean_query}
 
 
+def _youtube_results_url(query: str) -> str:
+    return (
+        "https://www.youtube.com/results?search_query="
+        f"{urllib.parse.quote_plus(query)}&sp=EgIQAQ%253D%253D"
+    )
+
+
+def _extract_youtube_video_ids(html: str) -> list[str]:
+    ids: list[str] = []
+    seen: set[str] = set()
+    for video_id in re.findall(r'"videoId":"([a-zA-Z0-9_-]{11})"', html or ''):
+        if video_id in seen:
+            continue
+        seen.add(video_id)
+        ids.append(video_id)
+    return ids
+
+
+def _resolve_youtube_video_url(query: str, result_index: int = 1) -> str | None:
+    request = urllib.request.Request(
+        _youtube_results_url(query),
+        headers={'User-Agent': 'Mozilla/5.0'},
+    )
+    with urllib.request.urlopen(request, timeout=8) as response:
+        html = response.read().decode('utf-8', errors='replace')
+
+    video_ids = _extract_youtube_video_ids(html)
+    if 1 <= result_index <= len(video_ids):
+        return f'https://www.youtube.com/watch?v={video_ids[result_index - 1]}&autoplay=1'
+    return None
+
+
+def _play_youtube(query: str, result_index: int = 1) -> dict[str, Any]:
+    clean_query = (query or '').strip()
+    if not clean_query:
+        return {'ok': False, 'error': 'Pesquisa vazia para o YouTube'}
+
+    safe_result_index = max(1, int(result_index or 1))
+    try:
+        video_url = _resolve_youtube_video_url(clean_query, safe_result_index)
+    except Exception:
+        video_url = None
+
+    if video_url:
+        webbrowser.open(video_url)
+        return {
+            'ok': True,
+            'url': video_url,
+            'query': clean_query,
+            'result_index': safe_result_index,
+        }
+
+    fallback_url = _youtube_results_url(clean_query)
+    webbrowser.open(fallback_url)
+    return {
+        'ok': True,
+        'url': fallback_url,
+        'query': clean_query,
+        'result_index': safe_result_index,
+        'fallback': 'search_results',
+    }
+
+
+def _control_youtube_playback(desired_state: str) -> dict[str, Any]:
+    for window in _find_windows('youtube'):
+        title = (window.title or '').strip()
+        try:
+            if getattr(window, 'isMinimized', False):
+                window.restore()
+            window.activate()
+            pyautogui.press('k')
+            return {
+                'ok': True,
+                'window_title': title or 'YouTube',
+                'state': desired_state,
+                'keys': 'k',
+            }
+        except Exception:
+            continue
+
+    return {
+        'ok': False,
+        'error': 'Nao encontrei uma janela do YouTube ativa para controlar.',
+    }
+
+
 def _phonetic_form(value: str) -> str:
     if not value:
         return value
@@ -815,6 +902,21 @@ def _run_action(data: dict[str, Any]) -> dict[str, Any]:
 
     if action == 'youtube_search':
         return _search_youtube(data.get('query') or '')
+
+    if action == 'youtube_play':
+        return _play_youtube(
+            data.get('query') or '',
+            int(data.get('result_index', 1) or 1),
+        )
+
+    if action == 'youtube_pause':
+        return _control_youtube_playback('pause')
+
+    if action == 'youtube_resume':
+        return _control_youtube_playback('resume')
+
+    if action == 'youtube_toggle_playback':
+        return _control_youtube_playback('toggle')
 
     if action == 'activate_window':
         window_title = (data.get('window_title') or data.get('target') or '').strip()

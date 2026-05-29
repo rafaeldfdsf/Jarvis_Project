@@ -11,6 +11,7 @@ import '../models/chat_response.dart';
 import '../services/agent_service.dart';
 import '../services/activity_history_service.dart';
 import '../services/app_settings_service.dart';
+import '../services/client_action_feedback.dart';
 import '../services/conversation_service.dart';
 import '../services/memory_service.dart';
 import '../services/voice_service.dart';
@@ -129,6 +130,7 @@ class _ChatScreenState extends State<ChatScreen> {
             action.arguments['window_title']?.toString() ??
             action.action,
       );
+      _appendClientActionFailure(action, result.ok, result.error);
       return;
     }
 
@@ -144,6 +146,7 @@ class _ChatScreenState extends State<ChatScreen> {
           detail: result.error,
           resolvedTarget: result.app ?? result.url ?? app,
         );
+        _appendClientActionFailure(action, result.ok, result.error);
         return;
       }
 
@@ -172,6 +175,7 @@ class _ChatScreenState extends State<ChatScreen> {
         detail: detail,
         resolvedTarget: resolvedTarget,
       );
+      _appendClientActionFailure(action, opened, detail);
       return;
     }
 
@@ -188,6 +192,7 @@ class _ChatScreenState extends State<ChatScreen> {
           detail: result.error,
           resolvedTarget: result.url ?? action.url,
         );
+        _appendClientActionFailure(action, result.ok, result.error);
         return;
       }
 
@@ -201,7 +206,23 @@ class _ChatScreenState extends State<ChatScreen> {
         success: opened,
         resolvedTarget: action.url,
       );
+      _appendClientActionFailure(action, opened, null);
     }
+  }
+
+  void _appendClientActionFailure(
+    ClientAction action,
+    bool success,
+    String? detail,
+  ) {
+    if (success) {
+      return;
+    }
+
+    conversation.appendLocalExchange(
+      userText: '',
+      assistantReply: buildClientActionFailureMessage(action, detail: detail),
+    );
   }
 
   Future<bool> _openAndroidApp(String app) async {

@@ -5,7 +5,6 @@ import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../models/app_setting_entry.dart';
-import '../models/memory_entry.dart';
 import '../models/routine.dart';
 import 'api_service.dart';
 import 'memory_service.dart';
@@ -58,7 +57,6 @@ class AppSettingsService extends ChangeNotifier {
   String _ttsMode = defaultTtsMode;
   String _ttsVoiceKey = '';
   String _ttsVoiceLabel = '';
-  Set<String> _knownKeys = <String>{};
 
   bool get loading => _loading;
   bool get saving => _saving;
@@ -126,17 +124,10 @@ class AppSettingsService extends ChangeNotifier {
         _applySettingsEntries(entries, preserveExistingValues: false);
         await _persistLocalSettings();
       } catch (error) {
-        try {
-          final entries = await _api.fetchMemoryEntries();
-          _applyEntries(entries, preserveExistingValues: false);
-          await _persistLocalSettings();
+        if (hasLocalSettings) {
           _warning = _normalizeError(error);
-        } catch (_) {
-          if (hasLocalSettings) {
-            _warning = _normalizeError(error);
-          } else {
-            _error = _normalizeError(error);
-          }
+        } else {
+          _error = _normalizeError(error);
         }
       }
 
@@ -233,32 +224,8 @@ class AppSettingsService extends ChangeNotifier {
           homeAssistantUrl: cleanHomeAssistantUrl,
           homeAssistantToken: cleanHomeAssistantToken,
         );
-        await MemoryService().refresh();
       } catch (error) {
-        try {
-          await _saveField('assistant_name', cleanAssistantName);
-          await _saveField('name', cleanUserName);
-          await _saveField('wake_word_phrase', cleanWakeWordPhrase);
-          await _saveField(
-            'wake_word_sensitivity',
-            cleanWakeWordSensitivity.toString(),
-          );
-          await _saveField('llm_provider', cleanLlmProvider);
-          await _saveField('ollama_url', cleanOllamaUrl);
-          await _saveField('ollama_model', cleanOllamaModel);
-          await _saveField('openai_model', cleanOpenAiModel);
-          await _saveField('openai_api_key', '');
-          await _saveField(
-            'home_assistant_enabled',
-            cleanHomeAssistantEnabled ? 'true' : 'false',
-          );
-          await _saveField('home_assistant_url', cleanHomeAssistantUrl);
-          await _saveField('home_assistant_token', cleanHomeAssistantToken);
-          await MemoryService().refresh();
-          _warning = _normalizeError(error);
-        } catch (_) {
-          _warning = _normalizeError(error);
-        }
+        _warning = _normalizeError(error);
       }
 
       notifyListeners();
@@ -296,7 +263,6 @@ class AppSettingsService extends ChangeNotifier {
       _ttsMode = defaultTtsMode;
       _ttsVoiceKey = '';
       _ttsVoiceLabel = '';
-      _knownKeys = <String>{};
       _loadedOnce = true;
       await _persistLocalSettings();
 
@@ -318,83 +284,6 @@ class AppSettingsService extends ChangeNotifier {
       _saving = false;
       notifyListeners();
     }
-  }
-
-  void _applyEntries(
-    List<MemoryEntry> entries, {
-    bool preserveExistingValues = false,
-  }) {
-    _knownKeys = entries.map((entry) => entry.key).toSet();
-
-    final assistantName = _entryValue(entries, 'assistant_name');
-    final userName =
-        _entryValue(entries, 'user_name') ?? _entryValue(entries, 'name');
-    final wakeWordPhrase = _entryValue(entries, 'wake_word_phrase');
-    final wakeWordSensitivity = _entryValue(entries, 'wake_word_sensitivity');
-    final llmProvider = _entryValue(entries, 'llm_provider');
-    final ollamaUrl = _entryValue(entries, 'ollama_url');
-    final ollamaModel = _entryValue(entries, 'ollama_model');
-    final openAiModel = _entryValue(entries, 'openai_model');
-    final homeAssistantEnabled = _entryValue(entries, 'home_assistant_enabled');
-    final homeAssistantUrl = _entryValue(entries, 'home_assistant_url');
-    final homeAssistantToken = _entryValue(entries, 'home_assistant_token');
-
-    _assistantName = assistantName?.trim().isNotEmpty == true
-        ? assistantName!.trim()
-        : preserveExistingValues
-            ? assistantNameOrDefault()
-            : defaultAssistantName;
-    _userName = userName?.trim().isNotEmpty == true
-        ? userName!.trim()
-        : preserveExistingValues
-            ? _userName
-            : '';
-    _wakeWordPhrase = wakeWordPhrase?.trim().isNotEmpty == true
-        ? wakeWordPhrase!.trim()
-        : preserveExistingValues
-            ? wakeWordOrDefault()
-            : _assistantName;
-    _wakeWordSensitivity = wakeWordSensitivity != null
-        ? _clampWakeWordSensitivity(int.tryParse(wakeWordSensitivity) ?? 40)
-        : preserveExistingValues
-            ? _wakeWordSensitivity
-            : 40;
-    _llmProvider = llmProvider?.trim().isNotEmpty == true
-        ? _normalizeLlmProvider(llmProvider!)
-        : preserveExistingValues
-            ? _llmProvider
-            : providerOllama;
-    _ollamaUrl = ollamaUrl?.trim().isNotEmpty == true
-        ? ollamaUrl!.trim()
-        : preserveExistingValues
-            ? _ollamaUrl
-            : defaultOllamaUrl;
-    _ollamaModel = ollamaModel?.trim().isNotEmpty == true
-        ? ollamaModel!.trim()
-        : preserveExistingValues
-            ? _ollamaModel
-            : defaultOllamaModel;
-    _openAiModel = openAiModel?.trim().isNotEmpty == true
-        ? _normalizeOpenAiModel(openAiModel!)
-        : preserveExistingValues
-            ? _openAiModel
-            : defaultOpenAiModel;
-    _homeAssistantEnabled = homeAssistantEnabled != null
-        ? _parseBool(homeAssistantEnabled)
-        : preserveExistingValues
-            ? _homeAssistantEnabled
-            : (homeAssistantUrl?.trim().isNotEmpty == true &&
-                homeAssistantToken?.trim().isNotEmpty == true);
-    _homeAssistantUrl = homeAssistantUrl?.trim().isNotEmpty == true
-        ? homeAssistantUrl!.trim()
-        : preserveExistingValues
-            ? _homeAssistantUrl
-            : '';
-    _homeAssistantToken = homeAssistantToken?.trim().isNotEmpty == true
-        ? homeAssistantToken!.trim()
-        : preserveExistingValues
-            ? _homeAssistantToken
-            : '';
   }
 
   Future<void> resetForAccountSwitch() async {
@@ -513,30 +402,6 @@ class AppSettingsService extends ChangeNotifier {
       return clean;
     }
     return assistantNameOrDefault();
-  }
-
-  String? _entryValue(List<MemoryEntry> entries, String key) {
-    for (final entry in entries) {
-      if (entry.key == key) {
-        return entry.value;
-      }
-    }
-    return null;
-  }
-
-  Future<void> _saveField(String key, String value) async {
-    final cleanValue = value.trim();
-
-    if (cleanValue.isEmpty) {
-      if (_knownKeys.contains(key)) {
-        await _api.deleteMemoryEntry(key);
-        _knownKeys.remove(key);
-      }
-      return;
-    }
-
-    await _api.updateMemoryEntry(key, cleanValue);
-    _knownKeys.add(key);
   }
 
   Future<bool> _loadLocalSettings() async {
